@@ -149,12 +149,8 @@ backup_restore() {
     fi
     printf '%s\n' "${output}"
 
-    rollback_unit="$(
-        awk -F= '$1 == "ROLLBACK_UNIT" {print $2}' <<<"${output}"
-    )"
-    server_public_key="$(
-        awk -F= '$1 == "SERVER_PUBLIC_KEY" {print $2}' <<<"${output}"
-    )"
+    rollback_unit="$(output_get "${output}" ROLLBACK_UNIT)"
+    server_public_key="$(output_get "${output}" SERVER_PUBLIC_KEY)"
     assert_wireguard_key "Restored server public key" "${server_public_key}"
 
     if ! remote_exec "sudo -n wg show '${VPN_INTERFACE}' >/dev/null"; then

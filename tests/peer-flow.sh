@@ -83,7 +83,16 @@ if grep -q '^# peer: windows$' "${TEST_ROOT}/last-sync.conf"; then
     exit 1
 fi
 
+generate_peer_material \
+    windows \
+    "${SECRETS_DIR}/pending/windows" \
+    "${STATE_DIR}/pending/windows.meta" \
+    pending-add
+pending_windows_key="$(
+    <"${SECRETS_DIR}/pending/windows/public.key"
+)"
 peer_bootstrap_all
+[[ "$(<"${SECRETS_DIR}/peers/windows/public.key")" == "${pending_windows_key}" ]]
 for name in windows ios macos android; do
     [[ -f "${STATE_DIR}/peers/${name}.meta" ]]
     [[ -f "${SECRETS_DIR}/peers/${name}/client.conf" ]]

@@ -24,7 +24,7 @@ scripts/vpnctl peer export android --qr
 scripts/vpnctl server bootstrap
 ```
 
-它会创建缺少的四端 peer、跳过已经完整存在的 peer，并重新导出配置。出现 pending 或残缺状态时会停止，不会自动轮换密钥。
+它会创建缺少的四端 peer、跳过已经完整存在的 peer，并重新导出配置。完整的 `pending-add` 会复用原密钥继续提交；待轮换或残缺状态会停止，不会自动轮换密钥。
 
 ## 密钥轮换
 

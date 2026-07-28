@@ -85,18 +85,12 @@ server_preflight() {
     )"
     printf '%s\n' "${output}"
 
-    DETECTED_WAN_INTERFACE="$(
-        awk -F= '$1 == "WAN_INTERFACE" {print $2}' <<<"${output}"
-    )"
+    DETECTED_WAN_INTERFACE="$(output_get "${output}" WAN_INTERFACE)"
     [[ -n "${DETECTED_WAN_INTERFACE}" ]] ||
         die "Remote preflight did not return a WAN interface"
 
-    PREFLIGHT_WEB_TCP_PORTS="$(
-        awk -F= '$1 == "WEB_TCP_PORTS" {print $2}' <<<"${output}"
-    )"
-    PREFLIGHT_WEB_UDP_PORTS="$(
-        awk -F= '$1 == "WEB_UDP_PORTS" {print $2}' <<<"${output}"
-    )"
+    PREFLIGHT_WEB_TCP_PORTS="$(output_get "${output}" WEB_TCP_PORTS)"
+    PREFLIGHT_WEB_UDP_PORTS="$(output_get "${output}" WEB_UDP_PORTS)"
     [[ -n "${PREFLIGHT_WEB_TCP_PORTS}" ]] ||
         die "Remote preflight did not return a website TCP listener"
     [[ "${PREFLIGHT_WEB_TCP_PORTS}" =~ ^[0-9]+(,[0-9]+)*$ ]] ||
@@ -105,7 +99,7 @@ server_preflight() {
        "${PREFLIGHT_WEB_UDP_PORTS}" =~ ^[0-9]+(,[0-9]+)*$ ]] ||
         die "Remote preflight returned unsafe website UDP ports"
     PREFLIGHT_DOCKER_INTEGRATION="$(
-        awk -F= '$1 == "DOCKER_INTEGRATION" {print $2}' <<<"${output}"
+        output_get "${output}" DOCKER_INTEGRATION
     )"
     [[ "${PREFLIGHT_DOCKER_INTEGRATION}" == "yes" ||
        "${PREFLIGHT_DOCKER_INTEGRATION}" == "no" ]] ||
@@ -239,12 +233,8 @@ server_deploy() (
     fi
     printf '%s\n' "${output}"
 
-    rollback_unit="$(
-        awk -F= '$1 == "ROLLBACK_UNIT" {print $2}' <<<"${output}"
-    )"
-    server_public_key="$(
-        awk -F= '$1 == "SERVER_PUBLIC_KEY" {print $2}' <<<"${output}"
-    )"
+    rollback_unit="$(output_get "${output}" ROLLBACK_UNIT)"
+    server_public_key="$(output_get "${output}" SERVER_PUBLIC_KEY)"
     assert_wireguard_key "Server public key" "${server_public_key}"
 
     if ! remote_exec "sudo -n wg show '${VPN_INTERFACE}' >/dev/null"; then

@@ -39,6 +39,13 @@ setup() {
     [ "${status}" -ne 0 ]
 }
 
+@test "structured output parsing preserves Base64 padding" {
+    output=$'ROLLBACK_UNIT=personal-vpn-rollback-test\nSERVER_PUBLIC_KEY=abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNO+='
+    run output_get "${output}" SERVER_PUBLIC_KEY
+    [ "${status}" -eq 0 ]
+    [ "${output}" = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNO+=" ]
+}
+
 @test "vpnctl help documents the public interface" {
     run "${ROOT_DIR}/scripts/vpnctl" --help
     [ "${status}" -eq 0 ]

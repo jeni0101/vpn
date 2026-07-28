@@ -164,6 +164,25 @@ meta_get() {
     ' "${file}"
 }
 
+output_get() {
+    local output="$1"
+    local key="$2"
+
+    awk -v wanted="${key}" '
+        index($0, wanted "=") == 1 {
+            sub(/^[^=]*=/, "")
+            print
+            found = 1
+            exit
+        }
+        END {
+            if (!found) {
+                exit 1
+            }
+        }
+    ' <<<"${output}"
+}
+
 write_meta() {
     local file="$1"
     local name="$2"

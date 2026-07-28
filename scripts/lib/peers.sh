@@ -92,6 +92,7 @@ peer_add() {
     local active_meta
     local temp_dir
     local backup_path
+    local resume_pending="no"
 
     load_config
     assert_safe_peer_name "${name}"
@@ -105,14 +106,24 @@ peer_add() {
     active_meta="${STATE_DIR}/peers/${name}.meta"
     [[ ! -e "${active_secret}" && ! -e "${active_meta}" ]] ||
         die "Peer is already active: ${name}"
-    [[ ! -e "${pending_secret}" && ! -e "${pending_meta}" ]] ||
-        die "Pending material already exists for ${name}"
+
+    if [[ -e "${pending_secret}" || -e "${pending_meta}" ]]; then
+        if peer_pending_material_complete "${name}" &&
+            [[ "$(meta_get "${pending_meta}" status)" == "pending-add" ]]; then
+            resume_pending="yes"
+            log "Resuming complete pending peer add: ${name}"
+        else
+            die "Incomplete or non-add pending material exists for ${name}"
+        fi
+    fi
 
     backup_path="$(backup_create)"
     log "Pre-change backup: ${backup_path}"
 
-    generate_peer_material \
-        "${name}" "${pending_secret}" "${pending_meta}" "pending-add"
+    if [[ "${resume_pending}" == "no" ]]; then
+        generate_peer_material \
+            "${name}" "${pending_secret}" "${pending_meta}" "pending-add"
+    fi
     assert_unique_peer_material "${pending_meta}"
 
     temp_dir="$(make_temp_dir)"
@@ -351,6 +362,18 @@ peer_active_material_complete() {
        -f "${secret_dir}/client.conf" ]]
 }
 
+peer_pending_material_complete() {
+    local name="$1"
+    local secret_dir="${SECRETS_DIR}/pending/${name}"
+    local meta_file="${STATE_DIR}/pending/${name}.meta"
+
+    [[ -f "${meta_file}" &&
+       -f "${secret_dir}/private.key" &&
+       -f "${secret_dir}/public.key" &&
+       -f "${secret_dir}/psk" &&
+       -f "${secret_dir}/client.conf" ]]
+}
+
 peer_assert_bootstrap_ready() {
     local name
     local active_meta
@@ -370,13 +393,18 @@ peer_assert_bootstrap_ready() {
             [[ ! -e "${pending_meta}" && ! -e "${pending_secret}" ]]; then
             continue
         fi
+        if [[ ! -e "${active_meta}" && ! -e "${active_secret}" ]] &&
+            peer_pending_material_complete "${name}" &&
+            [[ "$(meta_get "${pending_meta}" status)" == "pending-add" ]]; then
+            continue
+        fi
         if [[ ! -e "${active_meta}" &&
               ! -e "${active_secret}" &&
               ! -e "${pending_meta}" &&
               ! -e "${pending_secret}" ]]; then
             continue
         fi
-        die "Incomplete or pending peer state blocks bootstrap: ${name}"
+        die "Incomplete or non-resumable peer state blocks bootstrap: ${name}"
     done
 }
 

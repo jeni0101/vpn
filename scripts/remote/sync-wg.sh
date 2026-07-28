@@ -15,9 +15,13 @@ VPN_INTERFACE="${2:?VPN interface is required}"
 }
 
 server_private_key="$(</etc/wireguard/wg0.key)"
-rendered_config="${STAGED_CONFIG}.rendered"
+rendered_dir="$(mktemp -d /tmp/personal-vpn-wg.XXXXXXXX)"
+rendered_config="${rendered_dir}/${VPN_INTERFACE}.conf"
 old_config="$(mktemp /etc/wireguard/wg0.conf.previous.XXXXXXXX)"
-trap 'rm -f "${rendered_config}" "${old_config}"' EXIT
+trap '
+    rm -f "${rendered_config}" "${old_config}"
+    rmdir "${rendered_dir}" 2>/dev/null || true
+' EXIT
 
 while IFS= read -r line || [[ -n "${line}" ]]; do
     if [[ "${line}" == "PrivateKey = __SERVER_PRIVATE_KEY__" ]]; then
