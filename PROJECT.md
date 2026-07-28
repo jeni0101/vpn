@@ -28,6 +28,7 @@ Android  10.66.0.13 / fd66:66:66::13 ─┘                │
 | `state/pending/` | 待激活轮换元数据 | 忽略 |
 | `secrets/peers/` | 活动客户端私钥、PSK、配置 | 忽略 |
 | `secrets/pending/` | 待激活客户端材料 | 忽略 |
+| `secrets/backup-age-identity.txt` | 本地备份解密身份，只能离线另存 | 忽略且不进入备份 |
 | `exports/` | 临时导出的客户端配置 | 忽略 |
 | `backups/` | age 加密备份 | 忽略 |
 
@@ -39,10 +40,12 @@ Android  10.66.0.13 / fd66:66:66::13 ─┘                │
 
 ```text
 vpnctl config init
+vpnctl config prepare <public-ipv4> <public-ipv6> --cloud-firewall-ready --recovery-ready
 vpnctl lab test
 
 vpnctl server preflight
 vpnctl server deploy
+vpnctl server bootstrap
 vpnctl server status
 
 vpnctl peer add <windows|macos|ios|android>
@@ -68,8 +71,10 @@ vpnctl restore <archive-directory> --yes
 - SSH 用户具有无交互 sudo。
 - 恰好一个 IPv4 默认路由网卡。
 - 服务器具有全局 IPv6、IPv6 默认路由，并可通过 ICMPv6 访问公网。
+- 实际 IPv4、IPv6 出口与用户提供的地址完全一致。
+- 原生网站至少监听 TCP 80/443 之一。
 - `51999/udp` 未被非本项目服务占用。
-- UFW、firewalld 未启用。
+- Docker、Podman、服务器面板、UFW、firewalld 未启用。
 - 不存在未经本项目管理的 nftables 表。
 - 用户已经在配置中确认云安全组和云控制台/快照。
 
@@ -82,7 +87,7 @@ vpnctl restore <archive-directory> --yes
 
 所有配置先在临时目录渲染。WireGuard 使用 `wg-quick strip` 校验；nftables 使用重命名后的临时表执行 `nft -c`。
 
-部署会保存旧项目文件，并通过 transient systemd timer 安排两分钟自动回滚。只有本机成功建立新 SSH 会话并读取 `wg0` 状态后，才取消回滚。
+部署会保存旧项目文件，并通过 transient systemd timer 安排两分钟自动回滚。只有本机成功建立新 SSH 会话、验证 `wg0`、双栈转发、项目 nftables 表、原有网站监听及部署前可达的网站端口后，才取消回滚。
 
 ## 5. 防火墙
 
@@ -129,7 +134,8 @@ backups/<timestamp>/
 ## 8. 测试
 
 - `tests/static.sh`：Bash、ShellCheck、秘密扫描、模板和权限。
-- `tests/unit.bats`：地址映射、名称校验、CLI 及双栈配置渲染。
-- `tests/lab.sh`：真实 Linux network namespace、WireGuard、NAT44、NAT66、隔离、幂等加载和撤销。
+- `tests/unit.bats`：地址映射、公网地址、名称校验、CLI 及双栈配置渲染。
+- 配置、远端预检、部署后验证和真实 age 备份流的成功/失败测试。
+- `tests/lab.sh`：真实 Linux network namespace、WireGuard、NAT44、NAT66、网站端口、隔离、幂等加载和撤销。
 
 云端和四端的人工验收步骤见 [docs/clients.md](./docs/clients.md)。

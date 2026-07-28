@@ -25,10 +25,12 @@ Personal WireGuard VPN management
 
 Usage:
   vpnctl config init
+  vpnctl config prepare <public-ipv4> <public-ipv6> --cloud-firewall-ready --recovery-ready
   vpnctl lab test
 
   vpnctl server preflight
   vpnctl server deploy
+  vpnctl server bootstrap
   vpnctl server status
 
   vpnctl peer add <windows|macos|ios|android>
@@ -64,6 +66,10 @@ main() {
                     require_arg_count 0 "${@:3}"
                     config_init
                     ;;
+                prepare)
+                    require_arg_count 4 "${@:3}"
+                    config_prepare "${3}" "${4}" "${5}" "${6}"
+                    ;;
                 *) die "Unknown config command: ${2:-}" ;;
             esac
             ;;
@@ -86,6 +92,10 @@ main() {
                 deploy)
                     require_arg_count 0 "${@:3}"
                     server_deploy
+                    ;;
+                bootstrap)
+                    require_arg_count 0 "${@:3}"
+                    server_bootstrap
                     ;;
                 status)
                     require_arg_count 0 "${@:3}"

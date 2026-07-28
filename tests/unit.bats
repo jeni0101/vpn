@@ -43,7 +43,20 @@ setup() {
     run "${ROOT_DIR}/scripts/vpnctl" --help
     [ "${status}" -eq 0 ]
     [[ "${output}" == *"vpnctl server preflight"* ]]
+    [[ "${output}" == *"vpnctl config prepare"* ]]
+    [[ "${output}" == *"vpnctl server bootstrap"* ]]
     [[ "${output}" == *"vpnctl peer rotate activate"* ]]
+}
+
+@test "public IP validators distinguish families and private space" {
+    run is_global_ipv4 8.8.8.8
+    [ "${status}" -eq 0 ]
+    run is_global_ipv4 10.0.0.1
+    [ "${status}" -ne 0 ]
+    run is_global_ipv6 2606:4700:4700::1111
+    [ "${status}" -eq 0 ]
+    run is_global_ipv6 fd66:66:66::1
+    [ "${status}" -ne 0 ]
 }
 
 @test "server rendering keeps the private key on the server" {

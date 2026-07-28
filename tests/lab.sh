@@ -7,7 +7,7 @@ set -Eeuo pipefail
     exit 1
 }
 
-for command_name in ip wg nft ping sysctl; do
+for command_name in ip wg nft nc ping python3 sysctl; do
     command -v "${command_name}" >/dev/null 2>&1 || {
         printf 'Missing lab command: %s\n' "${command_name}" >&2
         exit 1
@@ -20,9 +20,14 @@ NS_SERVER="pvpn-srv-${RUN_ID}"
 NS_C1="pvpn-c1-${RUN_ID}"
 NS_C2="pvpn-c2-${RUN_ID}"
 TEMP_DIR="$(mktemp -d /tmp/personal-vpn-lab.XXXXXXXX)"
+WEB_PID=""
 
 cleanup() {
     local namespace
+    if [[ -n "${WEB_PID}" ]]; then
+        kill "${WEB_PID}" >/dev/null 2>&1 || true
+        wait "${WEB_PID}" 2>/dev/null || true
+    fi
     for namespace in "${NS_C2}" "${NS_C1}" "${NS_SERVER}" "${NS_WAN}"; do
         ip netns delete "${namespace}" >/dev/null 2>&1 || true
     done
@@ -87,6 +92,19 @@ connect_namespace "${NS_SERVER}" ws0 192.0.2.2 2001:db8:1::2
 connect_namespace "${NS_C1}" wc1 192.0.2.10 2001:db8:1::10
 connect_namespace "${NS_C2}" wc2 192.0.2.11 2001:db8:1::11
 
+ip netns exec "${NS_SERVER}" \
+    python3 -m http.server 80 --bind 0.0.0.0 \
+    >"${TEMP_DIR}/website.log" 2>&1 &
+WEB_PID="$!"
+for ((attempt = 1; attempt <= 20; attempt++)); do
+    if ip netns exec "${NS_WAN}" \
+        nc -z -w 1 192.0.2.2 80 >/dev/null 2>&1; then
+        break
+    fi
+    sleep 0.1
+done
+ip netns exec "${NS_WAN}" nc -z -w 1 192.0.2.2 80
+
 umask 077
 wg genkey >"${TEMP_DIR}/server.key"
 wg pubkey <"${TEMP_DIR}/server.key" >"${TEMP_DIR}/server.pub"
@@ -148,6 +166,18 @@ ip netns exec "${NS_SERVER}" sysctl -qw net.ipv6.conf.all.forwarding=1
 
 cat >"${TEMP_DIR}/lab.nft" <<'EOF'
 table inet personal_vpn_filter {
+    chain input {
+        type filter hook input priority filter; policy drop;
+
+        iifname "lo" accept
+        ct state invalid drop
+        ct state established,related accept
+        ip protocol icmp accept
+        ip6 nexthdr ipv6-icmp accept
+        tcp dport { 22, 80, 443 } accept
+        udp dport { 443, 51999 } accept
+    }
+
     chain forward {
         type filter hook forward priority filter; policy accept;
         iifname "wg0" oifname "wg0" drop
@@ -181,6 +211,7 @@ for spec in \
     ip netns exec "${NS_SERVER}" nft delete table "${family}" "${table_name}"
 done
 ip netns exec "${NS_SERVER}" nft -f "${TEMP_DIR}/lab.nft"
+ip netns exec "${NS_WAN}" nc -z -w 1 192.0.2.2 80
 
 assert_reachable "${NS_C1}" ipv4 198.51.100.1
 assert_reachable "${NS_C1}" ipv6 2001:db8:ffff::1

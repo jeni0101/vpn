@@ -338,3 +338,59 @@ peer_rotate_activate() {
     rm -f "${EXPORT_DIR}/${name}.conf"
     log "Rotation activated: ${name}"
 }
+
+peer_active_material_complete() {
+    local name="$1"
+    local secret_dir="${SECRETS_DIR}/peers/${name}"
+    local meta_file="${STATE_DIR}/peers/${name}.meta"
+
+    [[ -f "${meta_file}" &&
+       -f "${secret_dir}/private.key" &&
+       -f "${secret_dir}/public.key" &&
+       -f "${secret_dir}/psk" &&
+       -f "${secret_dir}/client.conf" ]]
+}
+
+peer_assert_bootstrap_ready() {
+    local name
+    local active_meta
+    local active_secret
+    local pending_meta
+    local pending_secret
+
+    load_config
+    ensure_runtime_dirs
+    for name in windows ios macos android; do
+        active_meta="${STATE_DIR}/peers/${name}.meta"
+        active_secret="${SECRETS_DIR}/peers/${name}"
+        pending_meta="${STATE_DIR}/pending/${name}.meta"
+        pending_secret="${SECRETS_DIR}/pending/${name}"
+
+        if peer_active_material_complete "${name}" &&
+            [[ ! -e "${pending_meta}" && ! -e "${pending_secret}" ]]; then
+            continue
+        fi
+        if [[ ! -e "${active_meta}" &&
+              ! -e "${active_secret}" &&
+              ! -e "${pending_meta}" &&
+              ! -e "${pending_secret}" ]]; then
+            continue
+        fi
+        die "Incomplete or pending peer state blocks bootstrap: ${name}"
+    done
+}
+
+peer_bootstrap_all() {
+    local name
+
+    peer_assert_bootstrap_ready
+    for name in windows ios macos android; do
+        if peer_active_material_complete "${name}"; then
+            log "Peer is already active; skipping creation: ${name}"
+        else
+            peer_add "${name}"
+        fi
+        peer_export "${name}" --file >/dev/null
+        log "Exported ${EXPORT_DIR}/${name}.conf"
+    done
+}

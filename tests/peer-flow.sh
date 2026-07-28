@@ -83,4 +83,31 @@ if grep -q '^# peer: windows$' "${TEST_ROOT}/last-sync.conf"; then
     exit 1
 fi
 
+peer_bootstrap_all
+for name in windows ios macos android; do
+    [[ -f "${STATE_DIR}/peers/${name}.meta" ]]
+    [[ -f "${SECRETS_DIR}/peers/${name}/client.conf" ]]
+    [[ -f "${EXPORT_DIR}/${name}.conf" ]]
+    grep -q '^AllowedIPs = 0.0.0.0/0, ::/0$' \
+        "${EXPORT_DIR}/${name}.conf"
+done
+
+sort -u "${SECRETS_DIR}/peers/"*/public.key >"${TEST_ROOT}/public-keys"
+sort -u "${SECRETS_DIR}/peers/"*/psk >"${TEST_ROOT}/psks"
+[[ "$(wc -l <"${TEST_ROOT}/public-keys")" -eq 4 ]]
+[[ "$(wc -l <"${TEST_ROOT}/psks")" -eq 4 ]]
+
+before_bootstrap="$(
+    sha256sum "${SECRETS_DIR}/peers/"*/private.key |
+        sha256sum |
+        awk '{print $1}'
+)"
+peer_bootstrap_all
+after_bootstrap="$(
+    sha256sum "${SECRETS_DIR}/peers/"*/private.key |
+        sha256sum |
+        awk '{print $1}'
+)"
+[[ "${before_bootstrap}" == "${after_bootstrap}" ]]
+
 printf 'peer lifecycle transaction flow: ok\n'

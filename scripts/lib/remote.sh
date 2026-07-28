@@ -79,7 +79,9 @@ server_preflight() {
             "${ROOT_DIR}/scripts/remote/preflight.sh" \
             "${VPN_PORT}" \
             "${VPN_INTERFACE}" \
-            "${WAN_INTERFACE:-}"
+            "${WAN_INTERFACE:-}" \
+            "${SERVER_PUBLIC_IPV4}" \
+            "${SERVER_PUBLIC_IPV6}"
     )"
     printf '%s\n' "${output}"
 
@@ -88,6 +90,62 @@ server_preflight() {
     )"
     [[ -n "${DETECTED_WAN_INTERFACE}" ]] ||
         die "Remote preflight did not return a WAN interface"
+
+    PREFLIGHT_WEB_TCP_PORTS="$(
+        awk -F= '$1 == "WEB_TCP_PORTS" {print $2}' <<<"${output}"
+    )"
+    PREFLIGHT_WEB_UDP_PORTS="$(
+        awk -F= '$1 == "WEB_UDP_PORTS" {print $2}' <<<"${output}"
+    )"
+    [[ -n "${PREFLIGHT_WEB_TCP_PORTS}" ]] ||
+        die "Remote preflight did not return a website TCP listener"
+    [[ "${PREFLIGHT_WEB_TCP_PORTS}" =~ ^[0-9]+(,[0-9]+)*$ ]] ||
+        die "Remote preflight returned unsafe website TCP ports"
+    [[ -z "${PREFLIGHT_WEB_UDP_PORTS}" ||
+       "${PREFLIGHT_WEB_UDP_PORTS}" =~ ^[0-9]+(,[0-9]+)*$ ]] ||
+        die "Remote preflight returned unsafe website UDP ports"
+}
+
+tcp_port_reachable() {
+    local host="$1"
+    local port="$2"
+
+    # shellcheck disable=SC2016 # $1 and $2 are expanded by the child bash.
+    timeout 5 bash -c \
+        'exec 3<>"/dev/tcp/$1/$2"' \
+        personal-vpn-tcp-probe "${host}" "${port}" \
+        >/dev/null 2>&1
+}
+
+capture_external_web_ports() {
+    local expected_ports="$1"
+    local port
+    local result=""
+    local -a ports=()
+
+    IFS=',' read -r -a ports <<<"${expected_ports}"
+    for port in "${ports[@]}"; do
+        if tcp_port_reachable "${SERVER_PUBLIC_IPV4}" "${port}"; then
+            if [[ -n "${result}" ]]; then
+                result+=","
+            fi
+            result+="${port}"
+        fi
+    done
+    printf '%s\n' "${result}"
+}
+
+verify_external_web_ports() {
+    local expected_ports="$1"
+    local port
+    local -a ports=()
+
+    [[ -n "${expected_ports}" ]] || return 0
+    IFS=',' read -r -a ports <<<"${expected_ports}"
+    for port in "${ports[@]}"; do
+        tcp_port_reachable "${SERVER_PUBLIC_IPV4}" "${port}" ||
+            return 1
+    done
 }
 
 cancel_remote_rollback() {
@@ -109,12 +167,25 @@ server_deploy() (
     local rollback_unit
     local server_public_key
     local wan_interface
+    local web_tcp_ports
+    local web_udp_ports
+    local externally_reachable_web_ports
 
     require_remote_config
-    require_command wg
+    require_command timeout wg
     ensure_runtime_dirs
     server_preflight >/dev/stderr
     wan_interface="${WAN_INTERFACE:-${DETECTED_WAN_INTERFACE}}"
+    web_tcp_ports="${PREFLIGHT_WEB_TCP_PORTS}"
+    web_udp_ports="${PREFLIGHT_WEB_UDP_PORTS}"
+    externally_reachable_web_ports="$(
+        capture_external_web_ports "${web_tcp_ports}"
+    )"
+    if [[ -z "${externally_reachable_web_ports}" ]]; then
+        warn "Website listeners are present remotely but were not directly reachable before deployment"
+    else
+        log "Externally reachable website TCP ports before deployment: ${externally_reachable_web_ports}"
+    fi
     stamp="$(utc_timestamp)"
     stage_name="personal-vpn-${stamp,,}-$$"
     remote_stage="/tmp/${stage_name}"
@@ -172,12 +243,41 @@ server_deploy() (
         return 1
     fi
 
+    if ! remote_sudo_script \
+        "${ROOT_DIR}/scripts/remote/postcheck.sh" \
+        "${VPN_INTERFACE}" \
+        "${web_tcp_ports}" \
+        "${web_udp_ports}"; then
+        warn "Remote VPN or website verification failed; automatic rollback remains armed."
+        return 1
+    fi
+
+    if ! verify_external_web_ports "${externally_reachable_web_ports}"; then
+        warn "A previously reachable website port is unavailable; automatic rollback remains armed."
+        return 1
+    fi
+
     cancel_remote_rollback "${rollback_unit}"
     printf '%s\n' "${server_public_key}" >"${STATE_DIR}/server-public.key"
     chmod 0600 "${STATE_DIR}/server-public.key"
     remote_exec "rm -rf '${remote_stage}'" >/dev/null
     log "Server deployment verified and rollback timer cancelled"
 )
+
+server_bootstrap() {
+    require_remote_config
+    require_age_identity_config
+    require_command age age-keygen bash scp sha256sum ssh tar timeout wg
+
+    peer_assert_bootstrap_ready
+    server_deploy
+    peer_bootstrap_all
+    server_status
+
+    log "Bootstrap completed; four client configurations are in ${EXPORT_DIR}"
+    log "Show a temporary mobile QR code with: scripts/vpnctl peer export <ios|android> --qr"
+    warn "Keep an offline copy of ${AGE_IDENTITY_FILE}; VPN backups intentionally exclude it"
+}
 
 sync_server_wireguard() {
     local local_config="$1"
@@ -208,5 +308,8 @@ server_status() {
          printf '\\nProject nftables tables:\\n'; \
          sudo -n nft list tables | grep personal_vpn || true; \
          printf '\\nGlobal IPv6 addresses:\\n'; \
-         ip -6 -o addr show scope global"
+         ip -6 -o addr show scope global; \
+         printf '\\nWebsite listeners:\\n'; \
+         ss -H -ltn | awk '\$4 ~ /:(80|443)\$/ {print}'; \
+         ss -H -lun | awk '\$4 ~ /:443\$/ {print}'"
 }

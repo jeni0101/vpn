@@ -92,6 +92,53 @@ is_ipv4_literal() {
     done
 }
 
+canonical_global_ip() {
+    local value="$1"
+    local family="$2"
+
+    require_command python3
+    python3 - "${value}" "${family}" <<'PY'
+import ipaddress
+import sys
+
+try:
+    address = ipaddress.ip_address(sys.argv[1])
+except ValueError:
+    raise SystemExit(1)
+
+expected_version = int(sys.argv[2])
+if address.version != expected_version or not address.is_global:
+    raise SystemExit(1)
+
+print(address.compressed)
+PY
+}
+
+is_global_ipv4() {
+    canonical_global_ip "${1:-}" 4 >/dev/null 2>&1
+}
+
+is_global_ipv6() {
+    canonical_global_ip "${1:-}" 6 >/dev/null 2>&1
+}
+
+is_ipv6_literal() {
+    local value="$1"
+
+    require_command python3
+    python3 - "${value}" <<'PY'
+import ipaddress
+import sys
+
+try:
+    address = ipaddress.ip_address(sys.argv[1])
+except ValueError:
+    raise SystemExit(1)
+
+raise SystemExit(0 if address.version == 6 else 1)
+PY
+}
+
 assert_safe_peer_name() {
     case "${1:-}" in
         windows | macos | ios | android) ;;

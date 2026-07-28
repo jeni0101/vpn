@@ -8,6 +8,8 @@ scripts/vpnctl backup verify backups/<timestamp>
 
 验证包括 SHA-256、age 解密和 tar 内容检查，全程不把明文归档写入磁盘。
 
+`secrets/backup-age-identity.txt` 不在备份中，必须使用部署时保存的离线副本。恢复前把它放回配置记录的路径并设为 `0600`。
+
 ## 完整恢复
 
 恢复会覆盖当前项目的服务器配置和本地 peer 状态：

@@ -2,10 +2,11 @@
 
 客户端只从 [WireGuard 官方安装页](https://www.wireguard.com/install/)指向的渠道获取。
 
+`server bootstrap` 已经创建全部四个 peer 并把文件配置写入 `exports/`，不要再次运行 `peer add`。需要重新导出文件或临时二维码时使用下面的命令。
+
 ## Windows
 
 ```bash
-scripts/vpnctl peer add windows
 scripts/vpnctl peer export windows --file
 ```
 
@@ -14,7 +15,6 @@ scripts/vpnctl peer export windows --file
 ## macOS
 
 ```bash
-scripts/vpnctl peer add macos
 scripts/vpnctl peer export macos --file
 ```
 
@@ -23,7 +23,6 @@ scripts/vpnctl peer export macos --file
 ## iOS
 
 ```bash
-scripts/vpnctl peer add ios
 scripts/vpnctl peer export ios --qr
 ```
 
@@ -32,7 +31,6 @@ scripts/vpnctl peer export ios --qr
 ## Android
 
 ```bash
-scripts/vpnctl peer add android
 scripts/vpnctl peer export android --qr
 ```
 

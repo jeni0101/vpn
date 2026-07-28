@@ -19,9 +19,13 @@ backup_create() {
 
     mkdir -m 0700 "${destination}"
 
+    # Only VPN peer secrets belong in a VPN backup. The age identity and
+    # unrelated credentials under secrets/ must never be encrypted by, or
+    # copied into, this archive.
     if ! tar -C "${ROOT_DIR}" -czf - \
         state \
-        secrets \
+        secrets/peers \
+        secrets/pending \
         config/local.env |
         age -r "${AGE_RECIPIENT}" -o "${local_archive}"; then
         rm -f "${local_archive}" "${server_archive}"
@@ -52,6 +56,8 @@ backup_create() {
     {
         printf 'format=personal-vpn-backup-v1\n'
         printf 'created_at=%s\n' "${stamp}"
+        printf 'public_ipv4=%s\n' "${SERVER_PUBLIC_IPV4}"
+        printf 'public_ipv6=%s\n' "${SERVER_PUBLIC_IPV6}"
         printf 'endpoint=%s\n' "${VPN_ENDPOINT_IPV4}"
         printf 'vpn_port=%s\n' "${VPN_PORT}"
     } >"${destination}/manifest"
@@ -62,6 +68,7 @@ backup_create() {
 
 backup_verify() {
     local archive_dir="$1"
+    local local_contents
 
     require_age_identity_config
     [[ -d "${archive_dir}" ]] || die "Backup directory does not exist: ${archive_dir}"
@@ -77,9 +84,18 @@ backup_verify() {
         cd "${archive_dir}"
         sha256sum -c SHA256SUMS
     )
-    age -d -i "${AGE_IDENTITY_FILE}" \
-        "${archive_dir}/local.tar.gz.age" |
-        tar -tzf - >/dev/null
+    local_contents="$(
+        age -d -i "${AGE_IDENTITY_FILE}" \
+            "${archive_dir}/local.tar.gz.age" |
+            tar -tzf -
+    )"
+    [[ -n "${local_contents}" ]] ||
+        die "The local backup archive is empty"
+    if grep -Eq \
+        '(^|/)(backup-age-identity\.txt|github-vpn-deploy-ed25519)$' \
+        <<<"${local_contents}"; then
+        die "The local backup improperly contains an encryption or deploy identity"
+    fi
     age -d -i "${AGE_IDENTITY_FILE}" \
         "${archive_dir}/server.tar.gz.age" |
         tar -tzf - >/dev/null
