@@ -1,0 +1,154 @@
+#!/usr/bin/env bash
+
+set -Eeuo pipefail
+
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+ROOT_DIR="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
+export ROOT_DIR
+
+# shellcheck source=scripts/lib/common.sh
+source "${SCRIPT_DIR}/lib/common.sh"
+# shellcheck source=scripts/lib/config.sh
+source "${SCRIPT_DIR}/lib/config.sh"
+# shellcheck source=scripts/lib/render.sh
+source "${SCRIPT_DIR}/lib/render.sh"
+# shellcheck source=scripts/lib/remote.sh
+source "${SCRIPT_DIR}/lib/remote.sh"
+# shellcheck source=scripts/lib/backup.sh
+source "${SCRIPT_DIR}/lib/backup.sh"
+# shellcheck source=scripts/lib/peers.sh
+source "${SCRIPT_DIR}/lib/peers.sh"
+
+usage() {
+    cat <<'EOF'
+Personal WireGuard VPN management
+
+Usage:
+  vpnctl config init
+  vpnctl lab test
+
+  vpnctl server preflight
+  vpnctl server deploy
+  vpnctl server status
+
+  vpnctl peer add <windows|macos|ios|android>
+  vpnctl peer export <name> --file
+  vpnctl peer export <name> --qr
+  vpnctl peer list
+  vpnctl peer revoke <name> --yes
+  vpnctl peer rotate prepare <name>
+  vpnctl peer rotate activate <name> --yes
+
+  vpnctl backup create
+  vpnctl backup verify <archive-directory>
+  vpnctl restore <archive-directory> --yes
+EOF
+}
+
+require_arg_count() {
+    local expected="$1"
+    shift
+    [[ "$#" -eq "${expected}" ]] ||
+        die "Unexpected arguments; run scripts/vpnctl --help"
+}
+
+main() {
+    local command="${1:-}"
+    case "${command}" in
+        -h | --help | help | "")
+            usage
+            ;;
+        config)
+            case "${2:-}" in
+                init)
+                    require_arg_count 0 "${@:3}"
+                    config_init
+                    ;;
+                *) die "Unknown config command: ${2:-}" ;;
+            esac
+            ;;
+        lab)
+            case "${2:-}" in
+                test)
+                    require_arg_count 0 "${@:3}"
+                    require_command sudo
+                    sudo -n "${ROOT_DIR}/tests/lab.sh"
+                    ;;
+                *) die "Unknown lab command: ${2:-}" ;;
+            esac
+            ;;
+        server)
+            case "${2:-}" in
+                preflight)
+                    require_arg_count 0 "${@:3}"
+                    server_preflight
+                    ;;
+                deploy)
+                    require_arg_count 0 "${@:3}"
+                    server_deploy
+                    ;;
+                status)
+                    require_arg_count 0 "${@:3}"
+                    server_status
+                    ;;
+                *) die "Unknown server command: ${2:-}" ;;
+            esac
+            ;;
+        peer)
+            case "${2:-}" in
+                add)
+                    require_arg_count 1 "${@:3}"
+                    peer_add "${3}"
+                    ;;
+                export)
+                    require_arg_count 2 "${@:3}"
+                    peer_export "${3}" "${4}"
+                    ;;
+                list)
+                    require_arg_count 0 "${@:3}"
+                    peer_list
+                    ;;
+                revoke)
+                    require_arg_count 2 "${@:3}"
+                    peer_revoke "${3}" "${4}"
+                    ;;
+                rotate)
+                    case "${3:-}" in
+                        prepare)
+                            require_arg_count 1 "${@:4}"
+                            peer_rotate_prepare "${4}"
+                            ;;
+                        activate)
+                            require_arg_count 2 "${@:4}"
+                            peer_rotate_activate "${4}" "${5}"
+                            ;;
+                        *) die "Unknown peer rotate command: ${3:-}" ;;
+                    esac
+                    ;;
+                *) die "Unknown peer command: ${2:-}" ;;
+            esac
+            ;;
+        backup)
+            case "${2:-}" in
+                create)
+                    require_arg_count 0 "${@:3}"
+                    backup_create
+                    ;;
+                verify)
+                    require_arg_count 1 "${@:3}"
+                    backup_verify "${3}"
+                    ;;
+                *) die "Unknown backup command: ${2:-}" ;;
+            esac
+            ;;
+        restore)
+            require_arg_count 2 "${@:2}"
+            backup_restore "${2}" "${3}"
+            ;;
+        *)
+            die "Unknown command: ${command}"
+            ;;
+    esac
+}
+
+main "$@"
