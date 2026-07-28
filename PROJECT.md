@@ -74,7 +74,7 @@ vpnctl restore <archive-directory> --yes
 - 实际 IPv4、IPv6 出口与用户提供的地址完全一致。
 - 原生网站至少监听 TCP 80/443 之一。
 - `51999/udp` 未被非本项目服务占用。
-- Docker、Podman、服务器面板、UFW、firewalld 未启用。
+- Docker 启用时必须具有标准 IPv4/IPv6 `DOCKER-USER` 调用链；Podman、服务器面板、活动 UFW、firewalld 未启用。
 - 不存在未经本项目管理的 nftables 表。
 - 用户已经在配置中确认云安全组和云控制台/快照。
 
@@ -109,6 +109,8 @@ INPUT 默认拒绝，但允许：
 
 FORWARD 只限制涉及 `wg0` 的流量，其他转发继续交给网站或容器系统。项目不清空全局 nftables ruleset。
 
+Docker 的 IPv4 `FORWARD` 默认拒绝时，项目通过 Docker 官方预留的 IPv4/IPv6 `DOCKER-USER` 链加入仅匹配 `wg0` 的规则。规则使用 `personal-vpn:*` 注释，应用幂等，回滚时按完整规则精确删除。
+
 ## 6. peer 事务
 
 - `peer add`：先备份，再在 pending 目录生成材料；远端同步成功后才转为 active。
@@ -136,6 +138,6 @@ backups/<timestamp>/
 - `tests/static.sh`：Bash、ShellCheck、秘密扫描、模板和权限。
 - `tests/unit.bats`：地址映射、公网地址、名称校验、CLI 及双栈配置渲染。
 - 配置、远端预检、部署后验证和真实 age 备份流的成功/失败测试。
-- `tests/lab.sh`：真实 Linux network namespace、WireGuard、NAT44、NAT66、网站端口、隔离、幂等加载和撤销。
+- `tests/lab.sh`：真实 Linux network namespace、Docker 风格双栈 `FORWARD DROP`/`DOCKER-USER`、WireGuard、NAT44、NAT66、网站端口、隔离、幂等加载和撤销。
 
 云端和四端的人工验收步骤见 [docs/clients.md](./docs/clients.md)。

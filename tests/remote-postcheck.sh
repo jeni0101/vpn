@@ -55,12 +55,26 @@ elif [[ "$*" == *"-lun"* ]]; then
 fi
 EOF
 
+for command_name in iptables ip6tables; do
+    cat >"${MOCK_BIN}/${command_name}" <<'EOF'
+#!/usr/bin/env bash
+set -Eeuo pipefail
+if [[ "${MOCK_DOCKER_RULE_MISSING:-no}" == "yes" &&
+      "$*" == *"personal-vpn:internet-egress"* ]]; then
+    exit 1
+fi
+exit 0
+EOF
+done
+
 chmod 0755 "${MOCK_BIN}/"*
 
 run_postcheck() {
     PATH="${MOCK_BIN}:/usr/bin:/bin" \
         "${SOURCE_ROOT}/scripts/remote/postcheck.sh" \
         wg0 \
+        eth0 \
+        "${MOCK_DOCKER_INTEGRATION:-no}" \
         80,443 \
         443
 }
@@ -88,5 +102,14 @@ if MOCK_NFT_MISSING=yes \
     exit 1
 fi
 grep -q 'Missing nftables table' "${TEST_ROOT}/nft.out"
+
+MOCK_DOCKER_INTEGRATION=yes run_postcheck >/dev/null
+if MOCK_DOCKER_INTEGRATION=yes \
+    MOCK_DOCKER_RULE_MISSING=yes \
+    run_postcheck >"${TEST_ROOT}/docker.out" 2>&1; then
+    printf 'Missing Docker compatibility rule was not rejected\n' >&2
+    exit 1
+fi
+grep -q 'Missing Docker compatibility rule' "${TEST_ROOT}/docker.out"
 
 printf 'remote post-deploy verification paths: ok\n'

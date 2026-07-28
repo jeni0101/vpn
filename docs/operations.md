@@ -64,4 +64,13 @@ scripts/vpnctl backup verify backups/<timestamp>
 
 ## 网站共存
 
-VPN 不监听 TCP 80/443 或 UDP 443。部署前已有的网站监听会在取消回滚前重新验证。网站改为 Docker、服务器面板，或引入新的 nftables 表后，后续 `server preflight` 会停止；不要为了绕过预检而清空网站规则。
+VPN 不监听 TCP 80/443 或 UDP 443。部署前已有的网站监听会在取消回滚前重新验证。
+
+标准 Docker 使用 `DOCKER-USER` 与 VPN 共存。项目规则都带 `personal-vpn:*` 注释且只匹配 `wg0`，不会删除 Docker 网络规则。Docker 重启或升级后应运行：
+
+```bash
+sudo systemctl reload personal-vpn-firewall.service
+scripts/vpnctl server status
+```
+
+改用 Podman、服务器面板，或出现 Docker/本项目之外的 nftables 表后，`server preflight` 会停止；不要为了绕过预检而清空业务规则。

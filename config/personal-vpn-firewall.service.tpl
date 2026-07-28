@@ -1,7 +1,7 @@
 [Unit]
 Description=Personal VPN nftables rules
 Wants=network-online.target
-After=network-online.target
+After=network-online.target docker.service
 Before=wg-quick@@VPN_INTERFACE@@.service
 
 [Service]

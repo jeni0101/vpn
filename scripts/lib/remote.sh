@@ -104,6 +104,12 @@ server_preflight() {
     [[ -z "${PREFLIGHT_WEB_UDP_PORTS}" ||
        "${PREFLIGHT_WEB_UDP_PORTS}" =~ ^[0-9]+(,[0-9]+)*$ ]] ||
         die "Remote preflight returned unsafe website UDP ports"
+    PREFLIGHT_DOCKER_INTEGRATION="$(
+        awk -F= '$1 == "DOCKER_INTEGRATION" {print $2}' <<<"${output}"
+    )"
+    [[ "${PREFLIGHT_DOCKER_INTEGRATION}" == "yes" ||
+       "${PREFLIGHT_DOCKER_INTEGRATION}" == "no" ]] ||
+        die "Remote preflight returned an unsafe Docker integration mode"
 }
 
 tcp_port_reachable() {
@@ -170,6 +176,7 @@ server_deploy() (
     local web_tcp_ports
     local web_udp_ports
     local externally_reachable_web_ports
+    local docker_integration
 
     require_remote_config
     require_command timeout wg
@@ -178,6 +185,7 @@ server_deploy() (
     wan_interface="${WAN_INTERFACE:-${DETECTED_WAN_INTERFACE}}"
     web_tcp_ports="${PREFLIGHT_WEB_TCP_PORTS}"
     web_udp_ports="${PREFLIGHT_WEB_UDP_PORTS}"
+    docker_integration="${PREFLIGHT_DOCKER_INTEGRATION}"
     externally_reachable_web_ports="$(
         capture_external_web_ports "${web_tcp_ports}"
     )"
@@ -199,8 +207,9 @@ server_deploy() (
     render_nftables_config "${temp_dir}/personal-vpn.nft" "${wan_interface}"
     render_sysctl_config "${temp_dir}/70-personal-vpn.conf"
     render_firewall_service "${temp_dir}/personal-vpn-firewall.service"
-    cp "${ROOT_DIR}/config/personal-vpn-firewall.sh" \
-        "${temp_dir}/personal-vpn-firewall"
+    render_firewall_script \
+        "${temp_dir}/personal-vpn-firewall" \
+        "${wan_interface}"
     cp "${ROOT_DIR}/config/personal-vpn-rollback.sh" \
         "${temp_dir}/personal-vpn-rollback"
 
@@ -246,6 +255,8 @@ server_deploy() (
     if ! remote_sudo_script \
         "${ROOT_DIR}/scripts/remote/postcheck.sh" \
         "${VPN_INTERFACE}" \
+        "${wan_interface}" \
+        "${docker_integration}" \
         "${web_tcp_ports}" \
         "${web_udp_ports}"; then
         warn "Remote VPN or website verification failed; automatic rollback remains armed."

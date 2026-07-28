@@ -71,6 +71,11 @@ if [[ "$*" == *"is-active"* &&
       "${MOCK_DOCKER:-no}" == "yes" ]]; then
     exit 0
 fi
+if [[ "$*" == *"is-active"* &&
+      "$*" == *"podman.service"* &&
+      "${MOCK_PODMAN:-no}" == "yes" ]]; then
+    exit 0
+fi
 exit 1
 EOF
 
@@ -92,6 +97,13 @@ EOF
 cat >"${MOCK_BIN}/nft" <<'EOF'
 #!/usr/bin/env bash
 set -Eeuo pipefail
+if [[ "${MOCK_DOCKER:-no}" == "yes" ]]; then
+    printf 'table ip nat\n'
+    printf 'table ip filter\n'
+    printf 'table ip6 nat\n'
+    printf 'table ip6 filter\n'
+    printf 'table ip raw\n'
+fi
 if [[ "${MOCK_FOREIGN_NFT:-no}" == "yes" ]]; then
     printf 'table inet foreign_filter\n'
 fi
@@ -106,6 +118,26 @@ else
     printf 'Status: inactive\n'
 fi
 EOF
+
+cat >"${MOCK_BIN}/docker" <<'EOF'
+#!/usr/bin/env bash
+exit 0
+EOF
+
+for command_name in iptables ip6tables; do
+    cat >"${MOCK_BIN}/${command_name}" <<'EOF'
+#!/usr/bin/env bash
+set -Eeuo pipefail
+if [[ "${MOCK_DOCKER_CHAIN_MISSING:-no}" == "yes" ]]; then
+    exit 1
+fi
+if [[ "${MOCK_DOCKER_USER_RULE:-no}" == "yes" &&
+      "$*" == *"-S DOCKER-USER"* ]]; then
+    printf '%s\n' '-A DOCKER-USER -s 192.0.2.0/24 -j ACCEPT'
+fi
+exit 0
+EOF
+done
 
 chmod 0755 "${MOCK_BIN}/"*
 
@@ -126,6 +158,7 @@ grep -qx 'PUBLIC_IPV4=8.8.8.8' <<<"${output}"
 grep -qx 'PUBLIC_IPV6=2606:4700:4700::1111' <<<"${output}"
 grep -qx 'WEB_TCP_PORTS=80,443' <<<"${output}"
 grep -qx 'WEB_UDP_PORTS=443' <<<"${output}"
+grep -qx 'DOCKER_INTEGRATION=no' <<<"${output}"
 
 if MOCK_NO_WEB=yes run_preflight >"${TEST_ROOT}/no-web.out" 2>&1; then
     printf 'Missing website listener was not rejected\n' >&2
@@ -146,11 +179,31 @@ if MOCK_FOREIGN_NFT=yes run_preflight >"${TEST_ROOT}/nft.out" 2>&1; then
 fi
 grep -q 'Existing nftables tables require manual review' "${TEST_ROOT}/nft.out"
 
-if MOCK_DOCKER=yes run_preflight >"${TEST_ROOT}/docker.out" 2>&1; then
-    printf 'Docker was not rejected\n' >&2
+docker_output="$(MOCK_DOCKER=yes run_preflight)"
+grep -qx 'DOCKER_INTEGRATION=yes' <<<"${docker_output}"
+
+if MOCK_DOCKER=yes \
+    MOCK_DOCKER_CHAIN_MISSING=yes \
+    run_preflight >"${TEST_ROOT}/docker-chain.out" 2>&1; then
+    printf 'Incomplete Docker firewall was not rejected\n' >&2
     exit 1
 fi
-grep -q 'Docker, Podman, 1Panel or BT panel detected' "${TEST_ROOT}/docker.out"
+grep -q 'DOCKER-USER chain is missing' "${TEST_ROOT}/docker-chain.out"
+
+if MOCK_DOCKER=yes \
+    MOCK_DOCKER_USER_RULE=yes \
+    run_preflight >"${TEST_ROOT}/docker-user.out" 2>&1; then
+    printf 'Unknown DOCKER-USER rule was not rejected\n' >&2
+    exit 1
+fi
+grep -q 'Unsupported existing iptables DOCKER-USER rules' \
+    "${TEST_ROOT}/docker-user.out"
+
+if MOCK_PODMAN=yes run_preflight >"${TEST_ROOT}/podman.out" 2>&1; then
+    printf 'Podman was not rejected\n' >&2
+    exit 1
+fi
+grep -q 'Podman, 1Panel or BT panel detected' "${TEST_ROOT}/podman.out"
 
 if MOCK_SUDO_FAIL=yes run_preflight >"${TEST_ROOT}/sudo.out" 2>&1; then
     printf 'Missing non-interactive sudo was not rejected\n' >&2

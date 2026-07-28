@@ -7,7 +7,8 @@
 - Ubuntu 24.04 LTS。
 - 固定公网 IPv4、直接配置并可出站的公网 IPv6。
 - 原生 Nginx 或 Caddy 至少监听 TCP 80/443 之一。
-- 不使用 Docker、Podman、1Panel、宝塔、UFW、firewalld 或自定义 nftables。
+- 允许标准 Docker `iptables-nft` 布局；IPv4、IPv6 `FORWARD` 必须调用空闲或仅含本项目规则的 `DOCKER-USER`。
+- 不使用 Podman、1Panel、宝塔、活动 UFW、firewalld 或其他自定义 nftables。
 - `ubuntu` 用户已安装 `~/.ssh/vpn_server_ed25519.pub`，支持 `sudo -n`。
 - 云控制台或救援模式可用，并已创建部署前快照。
 
@@ -57,7 +58,8 @@ scripts/vpnctl server preflight
 - 输入的 IPv6 确实配置在唯一 WAN 网卡。
 - `51999/udp` 未被其他服务占用。
 - 网站至少监听 TCP 80/443 之一，并记录 TCP 80/443、UDP 443 当前监听集合。
-- 不存在已启用的冲突防火墙、容器平台或服务器面板。
+- Docker 启用时，IPv4/IPv6 `DOCKER-USER` 和 `FORWARD` 调用链完整。
+- 不存在 Podman、服务器面板或 Docker/本项目之外的 nftables 表。
 
 任何失败都不得绕过。公网出口通过两个独立查询端点进行探测；两者均不可用时预检停止，不使用未经验证的结果。
 
@@ -74,14 +76,17 @@ scripts/vpnctl server bootstrap
 3. 安装 WireGuard、nftables 和自动安全更新。
 4. 生成只保留在服务器的 WireGuard 私钥。
 5. 应用双栈转发、NAT44、NAT66、peer 隔离及网站保留规则。
-6. 使用新 SSH 会话检查 WireGuard、三个项目 nftables 表和部署前的网站监听。
-7. 再次检查部署前可从管理机访问的网站端口。
-8. 全部通过后取消两分钟自动回滚。
-9. 按 Windows、iOS、macOS、Android 创建独立 peer，并导出到 `exports/`。
+6. Docker 启用时，只向 IPv4、IPv6 `DOCKER-USER` 加入带 `personal-vpn` 注释且匹配 `wg0` 的隔离、出口和返回流量规则。
+7. 使用新 SSH 会话检查 WireGuard、三个项目 nftables 表、Docker 兼容规则和部署前的网站监听。
+8. 再次检查部署前可从管理机访问的网站端口。
+9. 全部通过后取消两分钟自动回滚。
+10. 按 Windows、iOS、macOS、Android 创建独立 peer，并导出到 `exports/`。
 
 若网站原本只允许 CDN 等特定来源访问，管理机外部探测可能不可达；此时仍会严格验证服务器上的原有监听。部署前能够从管理机访问的端口，部署后必须继续可访问。
 
 `bootstrap` 可以安全重试。已完整创建的 peer 会保留原密钥并跳过；发现 pending 或不完整状态时停止，避免静默覆盖。
+
+项目不修改 Docker 网络、容器或 NAT 规则。回滚和停止服务只按完整参数及 `personal-vpn:*` 注释删除项目自己的 `DOCKER-USER` 规则。
 
 ## 5. 部署后检查
 

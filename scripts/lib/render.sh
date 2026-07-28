@@ -163,3 +163,19 @@ render_firewall_service() {
     replace_token template VPN_INTERFACE "${VPN_INTERFACE}"
     printf '%s\n' "${template}" >"${output}"
 }
+
+render_firewall_script() {
+    local output="$1"
+    local wan_interface="$2"
+    local template
+
+    load_config
+    [[ "${wan_interface}" =~ ^[A-Za-z0-9_.:-]+$ ]] ||
+        die "Unsafe WAN interface name: ${wan_interface}"
+
+    template="$(<"${ROOT_DIR}/config/personal-vpn-firewall.sh")"
+    replace_token template VPN_INTERFACE "${VPN_INTERFACE}"
+    replace_token template WAN_INTERFACE "${wan_interface}"
+    printf '%s\n' "${template}" >"${output}"
+    chmod 0755 "${output}"
+}

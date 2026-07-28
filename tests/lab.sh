@@ -7,7 +7,7 @@ set -Eeuo pipefail
     exit 1
 }
 
-for command_name in ip wg nft nc ping python3 sysctl; do
+for command_name in ip ip6tables iptables wg nft nc ping python3 sysctl; do
     command -v "${command_name}" >/dev/null 2>&1 || {
         printf 'Missing lab command: %s\n' "${command_name}" >&2
         exit 1
@@ -163,6 +163,35 @@ configure_client \
 
 ip netns exec "${NS_SERVER}" sysctl -qw net.ipv4.ip_forward=1
 ip netns exec "${NS_SERVER}" sysctl -qw net.ipv6.conf.all.forwarding=1
+
+# Simulate Docker's FORWARD policy and its supported user extension point.
+for command_name in iptables ip6tables; do
+    ip netns exec "${NS_SERVER}" "${command_name}" -w -P FORWARD DROP
+    ip netns exec "${NS_SERVER}" "${command_name}" -w -N DOCKER-USER
+    ip netns exec "${NS_SERVER}" "${command_name}" -w \
+        -I FORWARD 1 -j DOCKER-USER
+    ip netns exec "${NS_SERVER}" "${command_name}" -w \
+        -A DOCKER-USER \
+        -i wg0 -o wg0 \
+        -m comment --comment "personal-vpn:peer-isolation" \
+        -j DROP
+    ip netns exec "${NS_SERVER}" "${command_name}" -w \
+        -A DOCKER-USER \
+        -i wg0 -o eth0 \
+        -m comment --comment "personal-vpn:internet-egress" \
+        -j ACCEPT
+    ip netns exec "${NS_SERVER}" "${command_name}" -w \
+        -A DOCKER-USER \
+        -o wg0 \
+        -m conntrack --ctstate ESTABLISHED,RELATED \
+        -m comment --comment "personal-vpn:peer-return" \
+        -j ACCEPT
+    ip netns exec "${NS_SERVER}" "${command_name}" -w \
+        -A DOCKER-USER \
+        -o wg0 \
+        -m comment --comment "personal-vpn:peer-ingress-drop" \
+        -j DROP
+done
 
 cat >"${TEMP_DIR}/lab.nft" <<'EOF'
 table inet personal_vpn_filter {

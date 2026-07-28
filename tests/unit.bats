@@ -79,3 +79,16 @@ setup() {
     grep -q 'tcp dport { 22, 80, 443 } accept' "${output}"
     grep -q 'udp dport { 443, 51999 } accept' "${output}"
 }
+
+@test "firewall script rendering scopes Docker rules to VPN interfaces" {
+    # shellcheck source=scripts/lib/render.sh
+    source "${ROOT_DIR}/scripts/lib/render.sh"
+    output="${BATS_TEST_TMPDIR}/personal-vpn-firewall"
+    render_firewall_script "${output}" eth0
+    grep -q '^VPN_INTERFACE="wg0"$' "${output}"
+    grep -q '^WAN_INTERFACE="eth0"$' "${output}"
+    grep -q 'DOCKER-USER' "${output}"
+    grep -q 'personal-vpn:internet-egress' "${output}"
+    ! grep -q '@@' "${output}"
+    [ "$(stat -c '%a' "${output}")" = "755" ]
+}

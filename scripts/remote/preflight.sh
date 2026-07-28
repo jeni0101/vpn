@@ -72,6 +72,24 @@ probe_public_ip() {
     return 1
 }
 
+validate_docker_user_rules() {
+    local command_name="$1"
+    local unexpected_rules
+
+    unexpected_rules="$(
+        sudo -n "${command_name}" -w -S DOCKER-USER |
+            awk '
+                $1 == "-A" &&
+                $0 !~ /--comment "?personal-vpn:/ &&
+                $0 != "-A DOCKER-USER -j RETURN" {
+                    print
+                }
+            '
+    )"
+    [[ -z "${unexpected_rules}" ]] ||
+        fail "Unsupported existing ${command_name} DOCKER-USER rules: ${unexpected_rules//$'\n'/, }"
+}
+
 list_web_ports() {
     local protocol="$1"
     local ss_flag
@@ -176,10 +194,30 @@ observed_ipv6="$(probe_public_ip 6)" ||
 [[ "${observed_ipv6}" == "${expected_ipv6}" ]] ||
     fail "Public IPv6 egress is ${observed_ipv6}, expected ${expected_ipv6}"
 
-if systemctl is-active --quiet docker.service 2>/dev/null ||
-    systemctl is-active --quiet podman.service 2>/dev/null ||
+if systemctl is-active --quiet podman.service 2>/dev/null ||
     [[ -d /opt/1panel || -d /www/server/panel ]]; then
-    fail "Docker, Podman, 1Panel or BT panel detected; this deployment requires a native web stack"
+    fail "Podman, 1Panel or BT panel detected; this firewall layout is unsupported"
+fi
+
+docker_integration="no"
+if systemctl is-active --quiet docker.service 2>/dev/null; then
+    docker_integration="yes"
+    for docker_command in docker iptables ip6tables; do
+        command -v "${docker_command}" >/dev/null 2>&1 ||
+            fail "Active Docker requires ${docker_command}"
+    done
+    sudo -n docker info >/dev/null 2>&1 ||
+        fail "Active Docker is not accessible through sudo"
+    sudo -n iptables -w -S DOCKER-USER >/dev/null 2>&1 ||
+        fail "Docker IPv4 DOCKER-USER chain is missing"
+    sudo -n ip6tables -w -S DOCKER-USER >/dev/null 2>&1 ||
+        fail "Docker IPv6 DOCKER-USER chain is missing"
+    validate_docker_user_rules iptables
+    validate_docker_user_rules ip6tables
+    sudo -n iptables -w -C FORWARD -j DOCKER-USER >/dev/null 2>&1 ||
+        fail "Docker IPv4 FORWARD chain does not call DOCKER-USER"
+    sudo -n ip6tables -w -C FORWARD -j DOCKER-USER >/dev/null 2>&1 ||
+        fail "Docker IPv6 FORWARD chain does not call DOCKER-USER"
 fi
 
 web_tcp_ports="$(list_web_ports tcp)"
@@ -208,12 +246,18 @@ fi
 if command -v nft >/dev/null 2>&1; then
     unexpected_tables="$(
         sudo -n nft list tables 2>/dev/null |
-            awk '
+            awk -v docker_integration="${docker_integration}" '
                 $1 == "table" {
                     id = $2 " " $3
                     if (id != "inet personal_vpn_filter" &&
                         id != "ip personal_vpn_nat4" &&
-                        id != "ip6 personal_vpn_nat6") {
+                        id != "ip6 personal_vpn_nat6" &&
+                        !(docker_integration == "yes" &&
+                          (id == "ip nat" ||
+                           id == "ip filter" ||
+                           id == "ip6 nat" ||
+                           id == "ip6 filter" ||
+                           id == "ip raw"))) {
                         print id
                     }
                 }
@@ -229,5 +273,6 @@ printf 'PUBLIC_IPV4=%s\n' "${observed_ipv4}"
 printf 'PUBLIC_IPV6=%s\n' "${observed_ipv6}"
 printf 'WEB_TCP_PORTS=%s\n' "${web_tcp_ports}"
 printf 'WEB_UDP_PORTS=%s\n' "${web_udp_ports}"
+printf 'DOCKER_INTEGRATION=%s\n' "${docker_integration}"
 printf 'VPN_PORT=%s\n' "${VPN_PORT}"
 printf 'PREFLIGHT=ok\n'

@@ -15,6 +15,7 @@
 - 部署前硬性核对实际双栈出口、网站监听、端口、sudo 和冲突防火墙。
 - 原子 WireGuard 更新、部署自动回滚、`age` 加密备份与恢复。
 - 自动创建并导出四端 peer，重复 bootstrap 不轮换已有密钥。
+- 兼容标准 Docker `iptables-nft` 布局，只在 `DOCKER-USER` 加入带项目标记的 `wg0` 规则。
 - Bash、ShellCheck、Bats、备份流和双栈 network namespace 集成测试。
 
 项目不会自行实现 VPN 协议，也不会部署公网 Web 管理面。
@@ -62,6 +63,7 @@ scripts/vpnctl lab test
 
 - `config/local.env`、`state/`、`secrets/`、`exports/` 和 `backups/` 均不进入 Git。
 - VPN 备份只包含 peer 秘密，不包含 age identity、GitHub deploy key 或其他无关凭据。
+- 不删除或重写 Docker 的 NAT/转发规则；未知容器或防火墙布局仍会阻止部署。
 - 客户端私钥只在本机生成；服务端私钥只在服务器生成。
 - 二维码等同于客户端密码，只在终端临时显示。
 - VPN 保护设备到新加坡服务器之间的流量；服务器之后仍应使用 HTTPS。
