@@ -1,0 +1,28 @@
+# Codex/runtime metadata
+.agents/
+.codex/
+
+# Machine-specific configuration
+config/local.env
+
+# Generated peer state and all secrets
+state/*
+!state/.gitkeep
+secrets/*
+!secrets/.gitkeep
+
+# Encrypted backup bundles and exported client configurations
+backups/*
+!backups/.gitkeep
+exports/
+*.age
+*.key
+*.private
+*.qr
+
+# Test and editor artifacts
+.cache/
+tmp/
+*.swp
+*.tmp
+
