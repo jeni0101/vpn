@@ -18,7 +18,7 @@ class EnrollmentClient {
         require(invite.getInt("version") == 1)
         require(invite.getString("type") == "tnest-vpn-enrollment")
         val origin = URI(invite.getString("management_url"))
-        require(origin.scheme == "https" && origin.host == "vpn.example.com" &&
+        require(origin.scheme == "https" && origin.host == BuildConfig.TNEST_MANAGEMENT_HOST &&
                 origin.rawPath.orEmpty() in listOf("", "/") && origin.rawQuery == null)
         require(Instant.parse(invite.getString("expires_at")).isAfter(Instant.now()))
         val token = invite.getString("token")

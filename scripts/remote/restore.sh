@@ -5,8 +5,13 @@ set -Eeuo pipefail
 STAGE_ROOT="${1:?restore stage is required}"
 VPN_INTERFACE="${2:?VPN interface is required}"
 STAMP="${3:?restore stamp is required}"
+WEB_DOMAIN="${4:-vpn.example.com}"
 ROLLBACK_UNIT="personal-vpn-rollback-${STAMP,,}"
 BACKUP_DIR="/var/backups/personal-vpn/${STAMP}"
+[[ "${WEB_DOMAIN}" =~ ^[A-Za-z0-9.-]+$ && "${WEB_DOMAIN}" == *.* ]] || {
+    printf 'invalid management domain\n' >&2
+    exit 1
+}
 
 PROJECT_PATHS=(
     /etc/wireguard/wg0.key
@@ -97,11 +102,12 @@ if [[ -d "${STAGE_ROOT}/etc/personal-vpn" ]]; then
             install -D -m "$([[ "${path}" == usr/local/bin/* ]] && printf 0755 || printf 0644)" \
                 "${STAGE_ROOT}/${path}" "/${path}"
     done
-    if [[ -f "${STAGE_ROOT}/etc/nginx/sites-available/vpn.example.com" ]]; then
-        install -m 0644 "${STAGE_ROOT}/etc/nginx/sites-available/vpn.example.com" \
-            /etc/nginx/sites-available/vpn.example.com
-        ln -sfn /etc/nginx/sites-available/vpn.example.com \
-            /etc/nginx/sites-enabled/vpn.example.com
+    if [[ -f "${STAGE_ROOT}/etc/nginx/sites-available/${WEB_DOMAIN}" ]]; then
+        install -m 0644 \
+            "${STAGE_ROOT}/etc/nginx/sites-available/${WEB_DOMAIN}" \
+            "/etc/nginx/sites-available/${WEB_DOMAIN}"
+        ln -sfn "/etc/nginx/sites-available/${WEB_DOMAIN}" \
+            "/etc/nginx/sites-enabled/${WEB_DOMAIN}"
         nginx -t
         systemctl reload nginx
     fi

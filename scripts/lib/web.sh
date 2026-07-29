@@ -2,7 +2,6 @@
 
 set -Eeuo pipefail
 
-WEB_DOMAIN="vpn.example.com"
 WEB_DIST_DIR="${ROOT_DIR}/dist/control-plane"
 
 web_build() (
@@ -52,7 +51,7 @@ web_build() (
 
 web_dns_preflight() {
     require_command python3
-    python3 - "${WEB_DOMAIN}" "${SERVER_PUBLIC_IPV4}" "${SERVER_PUBLIC_IPV6}" <<'PY'
+    python3 - "${VPN_WEB_DOMAIN}" "${SERVER_PUBLIC_IPV4}" "${SERVER_PUBLIC_IPV6}" <<'PY'
 import ipaddress
 import socket
 import sys
@@ -79,7 +78,7 @@ web_preflight() {
         "${ROOT_DIR}/scripts/remote/web-preflight.sh" \
         "${SERVER_PUBLIC_IPV4}" \
         "${SERVER_PUBLIC_IPV6}" \
-        "${WEB_DOMAIN}"
+        "${VPN_WEB_DOMAIN}"
 }
 
 web_stage_and_install() (
@@ -101,13 +100,13 @@ web_stage_and_install() (
         "${stage}/personal-vpn-managerd.service"
     copy_to_remote "${ROOT_DIR}/config/personal-vpn-web.service" \
         "${stage}/personal-vpn-web.service"
-    copy_to_remote "${ROOT_DIR}/config/nginx-vpn.example.com.conf" \
+    copy_to_remote "${ROOT_DIR}/config/nginx-vpn-web.conf" \
         "${stage}/nginx.conf"
-    copy_to_remote "${ROOT_DIR}/config/nginx-vpn.example.com-bootstrap.conf" \
+    copy_to_remote "${ROOT_DIR}/config/nginx-vpn-web-bootstrap.conf" \
         "${stage}/nginx-bootstrap.conf"
     if ! remote_sudo_script \
         "${ROOT_DIR}/scripts/remote/install-web.sh" \
-        "${stage}" "${apply}" "${WEB_DOMAIN}" \
+        "${stage}" "${apply}" "${VPN_WEB_DOMAIN}" \
         "${VPN_ENDPOINT_IPV4}:${VPN_PORT}" "${AGE_RECIPIENT}"; then
         remote_exec "rm -rf '${stage}'" >/dev/null 2>&1 || true
         return 1
@@ -174,7 +173,7 @@ web_status() {
     remote_exec \
         "sudo -n systemctl --no-pager --full status personal-vpn-managerd personal-vpn-web; \
          sudo -n /usr/local/bin/personal-vpn-managerctl health; \
-         curl --fail --silent --show-error https://${WEB_DOMAIN}/api/v1/health"
+         curl --fail --silent --show-error https://${VPN_WEB_DOMAIN}/api/v1/health"
 }
 
 web_init_admin() {

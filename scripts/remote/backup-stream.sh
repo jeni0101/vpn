@@ -2,6 +2,10 @@
 
 set -Eeuo pipefail
 
+WEB_DOMAIN="${1:-vpn.example.com}"
+[[ "${WEB_DOMAIN}" =~ ^[A-Za-z0-9.-]+$ && "${WEB_DOMAIN}" == *.* ]] ||
+    { printf 'invalid management domain\n' >&2; exit 1; }
+
 paths=(
     etc/wireguard/wg0.key
     etc/wireguard/wg0.conf
@@ -23,8 +27,8 @@ optional=(
     usr/local/bin/personal-vpn-managerd
     usr/local/bin/personal-vpn-managerctl
     usr/local/bin/personal-vpn-web
-    etc/nginx/sites-available/vpn.example.com
-    etc/nginx/sites-enabled/vpn.example.com
+    "etc/nginx/sites-available/${WEB_DOMAIN}"
+    "etc/nginx/sites-enabled/${WEB_DOMAIN}"
 )
 restart_manager=no
 restart_web=no

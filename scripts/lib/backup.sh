@@ -34,7 +34,9 @@ backup_create() {
     fi
 
     ssh_args
-    if ! remote_sudo_script "${ROOT_DIR}/scripts/remote/backup-stream.sh" |
+    if ! remote_sudo_script \
+        "${ROOT_DIR}/scripts/remote/backup-stream.sh" \
+        "${VPN_WEB_DOMAIN}" |
         age -r "${AGE_RECIPIENT}" -o "${server_archive}"; then
         rm -f "${local_archive}" "${server_archive}"
         rmdir "${destination}" 2>/dev/null || true
@@ -133,7 +135,8 @@ backup_restore() {
             "${ROOT_DIR}/scripts/remote/restore.sh" \
             "${remote_stage}" \
             "${VPN_INTERFACE}" \
-            "${stamp}"
+            "${stamp}" \
+            "${VPN_WEB_DOMAIN}"
     )"; then
         warn "Remote restore failed. If firewall application began, wait two minutes for rollback."
         remote_exec "rm -rf '${remote_stage}'" >/dev/null 2>&1 || true

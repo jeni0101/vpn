@@ -14,6 +14,8 @@ for file in personal-vpn-managerd personal-vpn-managerctl personal-vpn-web \
 done
 [[ "${APPLY_CHANGES}" == "true" || "${APPLY_CHANGES}" == "false" ]] ||
     { printf 'invalid apply mode\n' >&2; exit 1; }
+[[ "${DOMAIN}" =~ ^[A-Za-z0-9.-]+$ && "${DOMAIN}" == *.* ]] ||
+    { printf 'invalid management domain\n' >&2; exit 1; }
 
 export DEBIAN_FRONTEND=noninteractive
 apt-get update
@@ -86,7 +88,15 @@ done
 systemctl enable personal-vpn-web
 systemctl restart personal-vpn-web
 
-install -m 0644 "${STAGE}/nginx-bootstrap.conf" "/etc/nginx/sites-available/${DOMAIN}"
+rendered_bootstrap="$(mktemp)"
+rendered_nginx="$(mktemp)"
+trap 'rm -f "${rendered_bootstrap}" "${rendered_nginx}"' EXIT
+sed "s/__VPN_WEB_DOMAIN__/${DOMAIN}/g" \
+    "${STAGE}/nginx-bootstrap.conf" >"${rendered_bootstrap}"
+sed "s/__VPN_WEB_DOMAIN__/${DOMAIN}/g" \
+    "${STAGE}/nginx.conf" >"${rendered_nginx}"
+
+install -m 0644 "${rendered_bootstrap}" "/etc/nginx/sites-available/${DOMAIN}"
 ln -sfn "/etc/nginx/sites-available/${DOMAIN}" "/etc/nginx/sites-enabled/${DOMAIN}"
 nginx -t
 systemctl reload nginx
@@ -95,7 +105,7 @@ if [[ ! -f "/etc/letsencrypt/live/${DOMAIN}/fullchain.pem" ]]; then
     certbot certonly --webroot -w /var/www/html --non-interactive --agree-tos \
         --register-unsafely-without-email -d "${DOMAIN}"
 fi
-install -m 0644 "${STAGE}/nginx.conf" "/etc/nginx/sites-available/${DOMAIN}"
+install -m 0644 "${rendered_nginx}" "/etc/nginx/sites-available/${DOMAIN}"
 nginx -t
 systemctl reload nginx
 curl --fail --silent --show-error --noproxy '*' \

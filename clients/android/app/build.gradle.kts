@@ -14,6 +14,10 @@ android {
         targetSdk = 36
         versionCode = 1
         versionName = "0.1.0"
+        val managementHost = providers.environmentVariable("TNEST_MANAGEMENT_HOST")
+            .orElse("vpn.example.com")
+            .get()
+        buildConfigField("String", "TNEST_MANAGEMENT_HOST", "\"$managementHost\"")
     }
 
     buildTypes {
@@ -23,7 +27,10 @@ android {
             // Signing is deliberately injected only by the offline release workstation.
         }
     }
-    buildFeatures { compose = true }
+    buildFeatures {
+        compose = true
+        buildConfig = true
+    }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17

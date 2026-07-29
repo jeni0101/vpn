@@ -150,7 +150,7 @@ web_assert_legacy_mutation_allowed() {
     if declare -F remote_exec >/dev/null &&
        remote_exec "systemctl is-active --quiet personal-vpn-managerd" \
            >/dev/null 2>&1; then
-        die "Web manager is active; modify peers in https://vpn.example.com or stop it explicitly for recovery"
+        die "Web manager is active; modify peers in the configured VPN management panel or stop it explicitly for recovery"
     fi
 }
 

@@ -16,7 +16,9 @@ public sealed record EnrollmentDocument(
 
 public sealed class EnrollmentClient(HttpClient http)
 {
-    private static readonly Uri TrustedOrigin = new("https://vpn.example.com");
+    private static readonly Uri TrustedOrigin = new(
+        Environment.GetEnvironmentVariable("TNEST_MANAGEMENT_URL") ??
+        "https://vpn.example.com");
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
 
     public async Task<WireGuardConfig> EnrollAsync(string document, CancellationToken cancellation)
