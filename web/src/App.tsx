@@ -386,7 +386,7 @@ function Devices({
     }
   };
   const rotate = async (device: Device) => {
-    const code = prompt("生成轮换文件需要当前 TOTP 验证码");
+    const code = prompt("生成多地区迁移文件需要当前 TOTP 验证码");
     if (!code) return;
     try {
       const result = await api.rotate(device.id, code);
@@ -431,7 +431,7 @@ function Devices({
                 {device.platform === "ios" || device.platform === "macos" ? (
                   <Button disabled={device.status !== "active"} onClick={() => void downloadAppleBundle(device)} variant="ghost">下载地区 ZIP</Button>
                 ) : (
-                  <Button disabled={device.status !== "active"} onClick={() => void rotate(device)} variant="ghost">轮换</Button>
+                  <Button disabled={device.status !== "active"} onClick={() => void rotate(device)} variant="ghost">迁移到多地区</Button>
                 )}
                 <Button disabled={device.status !== "active"} onClick={() => void revoke(device)} variant="danger">撤销</Button>
               </div>
@@ -776,6 +776,7 @@ function actionLabel(action: string | undefined) {
     "device.standard_config_created": "已创建标准配置",
     "device.qr_created": "已创建一次性二维码",
     "device.rotation_prepared": "已创建轮换注册文件",
+    "device.migration_prepared": "已创建多地区迁移文件",
     "device.enrolled": "设备完成注册或轮换",
     "device.revoked": "设备已撤销",
   } as Record<string, string>)[action ?? ""] || action || "未知操作";

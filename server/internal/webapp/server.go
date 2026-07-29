@@ -635,13 +635,13 @@ func (s *Server) rotate(w http.ResponseWriter, r *http.Request) {
 	data, _ := json.MarshalIndent(result.Invite, "", "  ")
 	data = append(data, '\n')
 	token, expires, err := s.downloads.Put(
-		safeFilename(result.Device.Name)+"-rotate.tnestvpn",
+		safeFilename(result.Device.Name)+"-migrate.tnestvpn",
 		"application/vnd.tnest.vpn-enrollment+json", data, 10*time.Minute)
 	if err != nil {
 		s.internalError(w, err)
 		return
 	}
-	s.auditEvent(r, sessionFrom(r).Username, "device.rotation_prepared", id, "")
+	s.auditEvent(r, sessionFrom(r).Username, "device.migration_prepared", id, "")
 	jsonResponse(w, http.StatusCreated, map[string]any{
 		"device": result.Device, "download_url": "/api/v1/downloads/" + token,
 		"expires_at": expires,

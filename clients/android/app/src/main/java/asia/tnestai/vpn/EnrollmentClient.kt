@@ -1,6 +1,7 @@
 package asia.tnestai.vpn
 
 import android.util.Base64
+import com.wireguard.crypto.Key
 import com.wireguard.crypto.KeyPair
 import org.json.JSONArray
 import org.json.JSONObject
@@ -15,7 +16,10 @@ import java.security.spec.X509EncodedKeySpec
 import java.time.Instant
 
 class EnrollmentClient {
-    fun enroll(document: String): MultiRegionProfile {
+    fun enroll(
+        document: String,
+        migrationConfig: String? = null
+    ): MultiRegionProfile {
         val invite = JSONObject(document)
         require(invite.keys().asSequence().toSet() == setOf(
             "version", "type", "management_url", "token", "expires_at",
@@ -30,6 +34,13 @@ class EnrollmentClient {
         val token = invite.getString("token")
         require(token.length >= 43)
         val signingKey = invite.getString("catalog_signing_key")
+        val purpose = invite.getString("purpose")
+        require(purpose == "enroll" || purpose == "migrate")
+        if (purpose == "migrate") {
+            requireNotNull(migrationConfig) {
+                "迁移现有设备需要本机原有的新加坡配置"
+            }
+        }
 
         val catalogEnvelope = requestJson(
             URL("${origin.scheme}://${origin.host}/api/v2/client/catalog"), "GET", null
@@ -42,13 +53,17 @@ class EnrollmentClient {
         for (index in 0 until catalogRegions.length()) {
             val region = catalogRegions.getJSONObject(index)
             if (region.getJSONArray("nodes").length() == 0) continue
-            val pair = KeyPair()
-            val pskBytes = ByteArray(32).also(SecureRandom()::nextBytes)
-            val generatedRegion = Generated(
-                pair.privateKey.toBase64(), pair.publicKey.toBase64(),
-                Base64.encodeToString(pskBytes, Base64.NO_WRAP)
-            )
-            pskBytes.fill(0)
+            val generatedRegion =
+                if (purpose == "migrate" && region.getString("code") == "SG") {
+                    migrationMaterial(requireNotNull(migrationConfig))
+                } else {
+                    val pair = KeyPair()
+                    val pskBytes = ByteArray(32).also(SecureRandom()::nextBytes)
+                    Generated(
+                        pair.privateKey.toBase64(), pair.publicKey.toBase64(),
+                        Base64.encodeToString(pskBytes, Base64.NO_WRAP)
+                    ).also { pskBytes.fill(0) }
+                }
             generated[region.getString("code")] = generatedRegion
             credentials.put(JSONObject()
                 .put("region_code", region.getString("code"))
@@ -239,6 +254,33 @@ class EnrollmentClient {
             require(it.optString("signature").isEmpty())
             require(it.optString("signed_payload").isEmpty())
         }
+    }
+
+    private fun migrationMaterial(text: String): Generated {
+        SafeConfig.parse(text)
+        var section = ""
+        var privateKey = ""
+        var presharedKey = ""
+        text.lineSequence().forEach { source ->
+            val line = source.substringBefore('#').substringBefore(';').trim()
+            if (line.startsWith("[") && line.endsWith("]")) {
+                section = line.lowercase()
+            } else if (line.contains('=')) {
+                val name = line.substringBefore('=').trim().lowercase()
+                val value = line.substringAfter('=').trim()
+                if (section == "[interface]" && name == "privatekey") {
+                    privateKey = value
+                }
+                if (section == "[peer]" && name == "presharedkey") {
+                    presharedKey = value
+                }
+            }
+        }
+        require(privateKey.isNotEmpty() && presharedKey.isNotEmpty())
+        val pair = KeyPair(Key.fromBase64(privateKey))
+        return Generated(
+            privateKey, pair.publicKey.toBase64(), presharedKey
+        )
     }
 
     private data class Generated(

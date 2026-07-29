@@ -27,7 +27,8 @@ public sealed class EnrollmentClient(HttpClient http)
 
     public async Task<MultiRegionProfile> EnrollProfileAsync(
         string document,
-        CancellationToken cancellation)
+        CancellationToken cancellation,
+        WireGuardConfig? migrationSource = null)
     {
         var invite = JsonSerializer.Deserialize<EnrollmentDocument>(document, Json)
             ?? throw new FormatException("注册文件无效");
@@ -37,8 +38,11 @@ public sealed class EnrollmentClient(HttpClient http)
             !string.Equals(management.Host, TrustedOrigin.Host, StringComparison.OrdinalIgnoreCase) ||
             management.Port != 443 || management.AbsolutePath != "/" ||
             invite.ExpiresAt <= DateTimeOffset.UtcNow || invite.Token.Length < 43 ||
-            string.IsNullOrWhiteSpace(invite.CatalogSigningKey))
+            string.IsNullOrWhiteSpace(invite.CatalogSigningKey) ||
+            invite.Purpose is not ("enroll" or "migrate"))
             throw new FormatException("注册文件无效或已过期");
+        if (invite.Purpose == "migrate" && migrationSource is null)
+            throw new FormatException("迁移现有设备需要本机原有的新加坡配置");
 
         var catalog = await http.GetFromJsonAsync<SignedCatalog>(
             new Uri(management, "/api/v2/client/catalog"), Json, cancellation)
@@ -50,6 +54,11 @@ public sealed class EnrollmentClient(HttpClient http)
         var generated = new List<GeneratedRegion>();
         try {
             foreach (var region in catalog.Regions.Where(value => value.Nodes.Count > 0)) {
+                if (invite.Purpose == "migrate" &&
+                    string.Equals(region.Code, "SG", StringComparison.OrdinalIgnoreCase)) {
+                    generated.Add(GenerateMigratedRegion(region.Code, migrationSource!));
+                    continue;
+                }
                 var algorithm = KeyAgreementAlgorithm.X25519;
                 using var privateKey = new Key(algorithm, new KeyCreationParameters {
                     ExportPolicy = KeyExportPolicies.AllowPlaintextExport
@@ -234,6 +243,33 @@ public sealed class EnrollmentClient(HttpClient http)
             CryptographicOperations.ZeroMemory(privateBytes);
             CryptographicOperations.ZeroMemory(publicBytes);
             CryptographicOperations.ZeroMemory(psk);
+        }
+    }
+
+    private static GeneratedRegion GenerateMigratedRegion(
+        string code,
+        WireGuardConfig source)
+    {
+        var privateBytes = Convert.FromBase64String(source.PrivateKey);
+        try {
+            var algorithm = KeyAgreementAlgorithm.X25519;
+            using var privateKey = Key.Import(
+                algorithm, privateBytes, KeyBlobFormat.RawPrivateKey,
+                new KeyCreationParameters {
+                    ExportPolicy = KeyExportPolicies.AllowPlaintextExport
+                });
+            var publicBytes = privateKey.PublicKey.Export(KeyBlobFormat.RawPublicKey);
+            try {
+                return new GeneratedRegion(
+                    code, source.PrivateKey, Convert.ToBase64String(publicBytes),
+                    source.PresharedKey);
+            }
+            finally {
+                CryptographicOperations.ZeroMemory(publicBytes);
+            }
+        }
+        finally {
+            CryptographicOperations.ZeroMemory(privateBytes);
         }
     }
 

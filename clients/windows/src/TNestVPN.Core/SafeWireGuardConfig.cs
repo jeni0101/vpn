@@ -3,7 +3,11 @@ using System.Text.RegularExpressions;
 
 namespace TNestVPN.Core;
 
-public sealed record WireGuardConfig(string Text, string Endpoint);
+public sealed record WireGuardConfig(
+    string Text,
+    string Endpoint,
+    string PrivateKey,
+    string PresharedKey);
 
 public static partial class SafeWireGuardConfig
 {
@@ -57,7 +61,10 @@ public static partial class SafeWireGuardConfig
         var endpoint = values["[peer]Endpoint"];
         if (!EndpointPattern().IsMatch(endpoint))
             throw new FormatException("Endpoint 无效");
-        return new WireGuardConfig(text, endpoint);
+        return new WireGuardConfig(
+            text, endpoint,
+            values["[interface]PrivateKey"],
+            values["[peer]PresharedKey"]);
     }
 
     private static void ValidateKey(string value)

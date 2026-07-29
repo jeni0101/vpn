@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
@@ -610,10 +611,11 @@ func (s *Service) CreateRotationInvite(ctx context.Context, id string) (InviteRe
 	return InviteResult{
 		Device: device,
 		Invite: model.InviteFile{
-			Version: 1, Type: "tnest-vpn-enrollment",
+			Version: 2, Type: "tnest-vpn-enrollment",
 			ManagementURL: s.cfg.ManagementURL, Token: value,
 			ExpiresAt: rotation.ExpiresAt, DeviceName: device.Name,
-			Purpose: "rotate",
+			CatalogSigningKey: s.CatalogPublicKey(),
+			Purpose:           "migrate",
 		},
 	}, nil
 }
@@ -1065,6 +1067,27 @@ func (s *Service) claimRotation(
 	device, err := s.store.RotationDevice(ctx, tokenHash, now)
 	if err != nil {
 		return model.Device{}, err
+	}
+	if subtle.ConstantTimeCompare(
+		[]byte(device.PublicKey), []byte(request.PublicKey),
+	) != 1 {
+		return model.Device{}, errors.New("migration must preserve the Singapore public key")
+	}
+	_, currentSealed, _, err := s.store.Device(ctx, device.ID)
+	if err != nil {
+		return model.Device{}, err
+	}
+	currentPSK, err := s.sealer.Open(currentSealed, "device-psk")
+	if err != nil {
+		return model.Device{}, err
+	}
+	defer func() {
+		for index := range currentPSK {
+			currentPSK[index] = 0
+		}
+	}()
+	if subtle.ConstantTimeCompare(currentPSK, []byte(request.PresharedKey)) != 1 {
+		return model.Device{}, errors.New("migration must preserve the Singapore preshared key")
 	}
 	rotated := device
 	rotated.PublicKey = request.PublicKey

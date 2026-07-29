@@ -89,23 +89,25 @@ func TestInviteClaimStandardAndRevoke(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	rotatedPrivate, _ := wgtypes.GeneratePrivateKey()
-	rotatedPSK, _ := wgtypes.GenerateKey()
+	if rotation.Invite.Version != 2 || rotation.Invite.Purpose != "migrate" {
+		t.Fatalf("unexpected migration invite: %#v", rotation.Invite)
+	}
+	migrationPSK := wireguard.peers[1].PresharedKey
 	rotated, err := service.Claim(ctx, ClaimRequest{
-		Token: rotation.Invite.Token, PublicKey: rotatedPrivate.PublicKey().String(),
-		PresharedKey: rotatedPSK.String(),
+		Token: rotation.Invite.Token, PublicKey: standard.Device.PublicKey,
+		PresharedKey: migrationPSK,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if rotated.PublicKey != rotatedPrivate.PublicKey().String() || len(wireguard.peers) != 2 {
-		t.Fatal("rotation did not replace exactly one peer")
+	if rotated.PublicKey != standard.Device.PublicKey || len(wireguard.peers) != 2 {
+		t.Fatal("migration changed the existing Singapore peer")
 	}
 	if _, err := service.Claim(ctx, ClaimRequest{
-		Token: rotation.Invite.Token, PublicKey: rotatedPrivate.PublicKey().String(),
-		PresharedKey: rotatedPSK.String(),
+		Token: rotation.Invite.Token, PublicKey: standard.Device.PublicKey,
+		PresharedKey: migrationPSK,
 	}); err == nil {
-		t.Fatal("rotation token was accepted twice")
+		t.Fatal("migration token was accepted twice")
 	}
 	if err := service.Revoke(ctx, claimed.ID); err != nil {
 		t.Fatal(err)

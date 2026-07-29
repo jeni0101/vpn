@@ -97,7 +97,9 @@ class MainActivity : ComponentActivity() {
         }
 
         suspend fun importEnrollment(text: String) {
-            val value = withContext(Dispatchers.IO) { EnrollmentClient().enroll(text) }
+            val value = withContext(Dispatchers.IO) {
+                EnrollmentClient().enroll(text, store.load())
+            }
             store.saveProfile(value)
             profile = value
             activeProfile = value

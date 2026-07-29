@@ -89,8 +89,12 @@ public partial class MainWindow : Window
         try {
             var text = await File.ReadAllTextAsync(path);
             if (path.EndsWith(".tnestvpn", StringComparison.OrdinalIgnoreCase)) {
+                WireGuardConfig? migrationSource = null;
+                if (File.Exists(store.ConfigPath)) {
+                    migrationSource = SafeWireGuardConfig.Parse(store.Load());
+                }
                 profile = await new EnrollmentClient(http).EnrollProfileAsync(
-                    text, CancellationToken.None);
+                    text, CancellationToken.None, migrationSource);
                 store.SaveProfile(profile);
                 LoadRegions(profile);
                 PrepareSelectedRegion();
