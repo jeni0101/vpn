@@ -34,7 +34,7 @@ jobs:
         working-directory: web
       - run: go test ./... && go vet ./...
         working-directory: server
-      - run: tests/run.sh
+      - run: chmod 0700 state secrets backups && tests/run.sh
       - uses: gitleaks/gitleaks-action@v2
 
   windows:
