@@ -113,8 +113,15 @@ systemctl reload personal-vpn-firewall.service
 if systemctl is-active --quiet "wg-quick@${VPN_INTERFACE}.service"; then
     wg syncconf "${VPN_INTERFACE}" <(wg-quick strip "${VPN_INTERFACE}")
 else
-    systemctl enable --now "wg-quick@${VPN_INTERFACE}.service"
+    if ip link show dev "${VPN_INTERFACE}" >/dev/null 2>&1; then
+        ip link delete dev "${VPN_INTERFACE}"
+    fi
+    if ! systemctl enable --now "wg-quick@${VPN_INTERFACE}.service"; then
+        printf 'Failed to start wg-quick@%s\n' "${VPN_INTERFACE}" >&2
+        exit 1
+    fi
 fi
+systemctl is-active --quiet "wg-quick@${VPN_INTERFACE}.service"
 
 server_public_key="$(wg pubkey </etc/wireguard/wg0.key)"
 printf 'ROLLBACK_UNIT=%s\n' "${ROLLBACK_UNIT}"
