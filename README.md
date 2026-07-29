@@ -19,7 +19,7 @@
 - Bash、ShellCheck、Bats、备份流和双栈 network namespace 集成测试。
 - root 权限 `personal-vpn-managerd` 只通过 Unix Socket 暴露固定管理操作。
 - 低权限 `personal-vpn-web`、Argon2id 密码、TOTP、恢复码、CSRF/CSP 和审计日志。
-- 动态地址池 `.14～.254`、7 天地址隔离、一次性注册/标准配置和流量统计。
+- 动态地址池 `.14～.254`、7 天地址隔离、一次性注册/标准配置、真实多周期流量统计和轻量网络测速。
 - Windows WPF 与 Android Compose 客户端均复用 WireGuard 官方嵌入方案，不自行实现协议。
 
 ## 快速开始

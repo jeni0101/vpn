@@ -1,4 +1,5 @@
 import type { AuditEvent, Device, UsagePoint } from "./types";
+import { usageWindow, type UsageQuery } from "./usage";
 
 let csrfToken = sessionStorage.getItem("tnest_csrf") ?? "";
 
@@ -48,7 +49,8 @@ export const api = {
     sessionStorage.removeItem("tnest_csrf");
   },
   async devices() {
-    return (await request<{ devices: Device[] }>("/api/v1/devices")).devices;
+    const payload = await request<{ devices?: Device[] | null }>("/api/v1/devices");
+    return Array.isArray(payload.devices) ? payload.devices : [];
   },
   createDevice(name: string, platform: string, mode: string, totp: string) {
     return request<{ device: Device; download_url: string; expires_at: string }>(
@@ -77,18 +79,19 @@ export const api = {
       },
     );
   },
-  async usage(deviceId = "", bucket = "hour") {
-    const now = new Date();
-    const from = new Date(now.getTime() - 24 * 60 * 60 * 1000);
-    const query = new URLSearchParams({
-      device_id: deviceId,
-      bucket,
-      from: from.toISOString().replace(/\.\d{3}Z$/, "Z"),
-      to: new Date(now.getTime() + 60 * 60 * 1000).toISOString().replace(/\.\d{3}Z$/, "Z"),
+  async usage(options: UsageQuery = { range: "24h" }) {
+    const window = usageWindow(options.range, options.now);
+    const search = new URLSearchParams({
+      device_id: options.deviceId ?? "",
+      bucket: window.bucket,
+      from: window.from.toISOString().replace(/\.\d{3}Z$/, "Z"),
+      to: window.to.toISOString().replace(/\.\d{3}Z$/, "Z"),
     });
-    return (await request<{ points: UsagePoint[] }>(`/api/v1/usage?${query}`)).points;
+    const payload = await request<{ points?: UsagePoint[] | null }>(`/api/v1/usage?${search}`);
+    return Array.isArray(payload.points) ? payload.points : [];
   },
   async audit() {
-    return (await request<{ events: AuditEvent[] }>("/api/v1/audit?limit=100")).events;
+    const payload = await request<{ events?: AuditEvent[] | null }>("/api/v1/audit?limit=100");
+    return Array.isArray(payload.events) ? payload.events : [];
   },
 };

@@ -48,4 +48,28 @@ func TestSlotAllocationAndUsageReset(t *testing.T) {
 	if len(points) != 1 || points[0].UploadBytes != 70 || points[0].DownloadBytes != 100 {
 		t.Fatalf("unexpected usage: %#v", points)
 	}
+	devices, err := db.ListDevices(ctx)
+	if err != nil || len(devices) != 1 || devices[0].StatsUpdatedAt == nil {
+		t.Fatalf("missing stats sample time: devices=%#v err=%v", devices, err)
+	}
+	if !devices[0].StatsUpdatedAt.Equal(now.Add(2 * time.Minute)) {
+		t.Fatalf("stats sample time=%v", devices[0].StatsUpdatedAt)
+	}
+}
+
+func TestEmptyCollectionsEncodeAsArrays(t *testing.T) {
+	ctx := context.Background()
+	db, err := Open(t.TempDir() + "/manager.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	points, err := db.Usage(ctx, "", "hour", time.Now().Add(-time.Hour), time.Now())
+	if err != nil || points == nil || len(points) != 0 {
+		t.Fatalf("empty usage must be a non-nil slice: %#v err=%v", points, err)
+	}
+	events, err := db.Audit(ctx, 100)
+	if err != nil || events == nil || len(events) != 0 {
+		t.Fatalf("empty audit must be a non-nil slice: %#v err=%v", events, err)
+	}
 }

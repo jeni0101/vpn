@@ -137,14 +137,15 @@ func (s *Store) ListDevices(ctx context.Context) ([]model.Device, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT d.id,d.name,d.platform,d.ipv4,d.ipv6,d.public_key,d.status,
 		       d.external_private,d.created_at,d.revoked_at,d.quarantine_until,
-		       u.last_handshake,COALESCE(u.total_upload,0),COALESCE(u.total_download,0)
+		       u.last_handshake,u.updated_at,
+		       COALESCE(u.total_upload,0),COALESCE(u.total_download,0)
 		FROM devices d LEFT JOIN usage_state u ON u.device_id=d.id
 		ORDER BY d.slot`)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var result []model.Device
+	result := make([]model.Device, 0)
 	for rows.Next() {
 		device, err := scanDevice(rows)
 		if err != nil {
@@ -159,17 +160,19 @@ func (s *Store) Device(ctx context.Context, id string) (model.Device, []byte, in
 	row := s.db.QueryRowContext(ctx, `
 		SELECT d.id,d.name,d.platform,d.ipv4,d.ipv6,d.public_key,d.status,
 		       d.external_private,d.created_at,d.revoked_at,d.quarantine_until,
-		       u.last_handshake,COALESCE(u.total_upload,0),COALESCE(u.total_download,0),
+		       u.last_handshake,u.updated_at,
+		       COALESCE(u.total_upload,0),COALESCE(u.total_download,0),
 		       d.psk_sealed,d.slot
 		FROM devices d LEFT JOIN usage_state u ON u.device_id=d.id WHERE d.id=?`, id)
 	var device model.Device
-	var created, revoked, quarantine, handshake sql.NullString
+	var created, revoked, quarantine, handshake, statsUpdated sql.NullString
 	var external int
 	var sealed []byte
 	var slot int
 	err := row.Scan(&device.ID, &device.Name, &device.Platform, &device.IPv4, &device.IPv6,
 		&device.PublicKey, &device.Status, &external, &created, &revoked, &quarantine,
-		&handshake, &device.UploadBytes, &device.DownloadBytes, &sealed, &slot)
+		&handshake, &statsUpdated, &device.UploadBytes, &device.DownloadBytes,
+		&sealed, &slot)
 	if errors.Is(err, sql.ErrNoRows) {
 		return model.Device{}, nil, 0, ErrNotFound
 	}
@@ -177,26 +180,30 @@ func (s *Store) Device(ctx context.Context, id string) (model.Device, []byte, in
 		return model.Device{}, nil, 0, err
 	}
 	device.ExternalPrivate = external != 0
-	parseTimes(&device, created, revoked, quarantine, handshake)
+	parseTimes(&device, created, revoked, quarantine, handshake, statsUpdated)
 	return device, sealed, slot, nil
 }
 
 func scanDevice(scanner interface{ Scan(...any) error }) (model.Device, error) {
 	var device model.Device
-	var created, revoked, quarantine, handshake sql.NullString
+	var created, revoked, quarantine, handshake, statsUpdated sql.NullString
 	var external int
 	err := scanner.Scan(&device.ID, &device.Name, &device.Platform, &device.IPv4,
 		&device.IPv6, &device.PublicKey, &device.Status, &external, &created,
-		&revoked, &quarantine, &handshake, &device.UploadBytes, &device.DownloadBytes)
+		&revoked, &quarantine, &handshake, &statsUpdated,
+		&device.UploadBytes, &device.DownloadBytes)
 	if err != nil {
 		return model.Device{}, err
 	}
 	device.ExternalPrivate = external != 0
-	parseTimes(&device, created, revoked, quarantine, handshake)
+	parseTimes(&device, created, revoked, quarantine, handshake, statsUpdated)
 	return device, nil
 }
 
-func parseTimes(device *model.Device, created, revoked, quarantine, handshake sql.NullString) {
+func parseTimes(
+	device *model.Device,
+	created, revoked, quarantine, handshake, statsUpdated sql.NullString,
+) {
 	device.CreatedAt, _ = time.Parse(time.RFC3339Nano, created.String)
 	if revoked.Valid {
 		value, _ := time.Parse(time.RFC3339Nano, revoked.String)
@@ -209,6 +216,10 @@ func parseTimes(device *model.Device, created, revoked, quarantine, handshake sq
 	if handshake.Valid && handshake.String != "" {
 		value, _ := time.Parse(time.RFC3339Nano, handshake.String)
 		device.LastHandshake = &value
+	}
+	if statsUpdated.Valid && statsUpdated.String != "" {
+		value, _ := time.Parse(time.RFC3339Nano, statsUpdated.String)
+		device.StatsUpdatedAt = &value
 	}
 }
 
@@ -578,7 +589,7 @@ func (s *Store) Usage(
 		return nil, err
 	}
 	defer rows.Close()
-	var points []model.UsagePoint
+	points := make([]model.UsagePoint, 0)
 	for rows.Next() {
 		var point model.UsagePoint
 		var bucketValue string
@@ -611,7 +622,7 @@ func (s *Store) Audit(ctx context.Context, limit int) ([]model.AuditEvent, error
 		return nil, err
 	}
 	defer rows.Close()
-	var result []model.AuditEvent
+	result := make([]model.AuditEvent, 0)
 	for rows.Next() {
 		var event model.AuditEvent
 		var at string

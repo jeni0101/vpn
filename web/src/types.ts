@@ -13,6 +13,7 @@ export interface Device {
   revoked_at?: string;
   quarantine_until?: string;
   last_handshake?: string;
+  stats_updated_at?: string;
   upload_bytes: number;
   download_bytes: number;
 }

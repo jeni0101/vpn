@@ -154,12 +154,15 @@ func (s *Server) totp(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	session, _ = s.auth.Session(r.Context(), token)
+	s.auditEvent(r, session.Username, "auth.login", "", "")
 	jsonResponse(w, http.StatusOK, map[string]string{
 		"username": session.Username, "csrf_token": session.CSRF,
 	})
 }
 
 func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
+	session := sessionFrom(r)
+	s.auditEvent(r, session.Username, "auth.logout", "", "")
 	token, _ := s.cookie(r)
 	_ = s.auth.DeleteSession(r.Context(), token)
 	http.SetCookie(w, &http.Cookie{

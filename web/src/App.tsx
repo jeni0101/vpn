@@ -1,8 +1,36 @@
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type FormEvent,
+} from "react";
 import { api } from "./api";
+import { SpeedTestPanel } from "./SpeedTestPanel";
 import type { AuditEvent, Device, UsagePoint } from "./types";
+import {
+  Button,
+  Dialog,
+  EmptyState,
+  ErrorBoundary,
+  ErrorState,
+  Icon,
+  Panel,
+  Skeleton,
+  Status,
+  Tabs,
+  type IconName,
+} from "./ui";
+import { UsageChart, formatBytes, formatRate } from "./UsageChart";
+import {
+  mergeDeviceRates,
+  safeBytes,
+  type DeviceRate,
+  type UsageRange,
+} from "./usage";
 
-type Screen = "dashboard" | "devices" | "usage" | "audit";
+type Screen = "dashboard" | "devices" | "usage" | "speed" | "audit";
 type AuthPhase = "loading" | "login" | "totp" | "ready";
 
 const platformName: Record<string, string> = {
@@ -13,15 +41,40 @@ const platformName: Record<string, string> = {
   other: "其他",
 };
 
-function App() {
+export default function App() {
   const [phase, setPhase] = useState<AuthPhase>("loading");
   const [username, setUsername] = useState("");
   const [screen, setScreen] = useState<Screen>("dashboard");
   const [devices, setDevices] = useState<Device[]>([]);
-  const [usage, setUsage] = useState<UsagePoint[]>([]);
-  const [audit, setAudit] = useState<AuditEvent[]>([]);
+  const [rates, setRates] = useState<Record<string, DeviceRate>>({});
+  const [dashboardUsage, setDashboardUsage] = useState<UsagePoint[]>([]);
+  const [coreLoading, setCoreLoading] = useState(true);
   const [error, setError] = useState("");
   const [addOpen, setAddOpen] = useState(false);
+  const previousDevices = useRef<Device[]>([]);
+
+  const acceptDevices = useCallback((next: Device[] | null | undefined) => {
+    const safe = Array.isArray(next) ? next : [];
+    setRates((existing) => mergeDeviceRates(existing, previousDevices.current, safe));
+    previousDevices.current = safe;
+    setDevices(safe);
+  }, []);
+
+  const refreshCore = useCallback(async () => {
+    try {
+      const [nextDevices, nextUsage] = await Promise.all([
+        api.devices(),
+        api.usage({ range: "24h" }),
+      ]);
+      acceptDevices(nextDevices);
+      setDashboardUsage(nextUsage);
+      setError("");
+    } catch (reason) {
+      setError(message(reason));
+    } finally {
+      setCoreLoading(false);
+    }
+  }, [acceptDevices]);
 
   useEffect(() => {
     api.session()
@@ -32,37 +85,29 @@ function App() {
       .catch(() => setPhase("login"));
   }, []);
 
-  const refresh = async () => {
-    try {
-      const [nextDevices, nextUsage] = await Promise.all([api.devices(), api.usage()]);
-      setDevices(nextDevices);
-      setUsage(nextUsage);
-      if (screen === "audit") setAudit(await api.audit());
-    } catch (reason) {
-      setError(message(reason));
-    }
-  };
-
   useEffect(() => {
     if (phase !== "ready") return;
-    void refresh();
+    void refreshCore();
+    const timer = window.setInterval(() => void refreshCore(), 30_000);
     const source = new EventSource("/api/v1/events");
     source.addEventListener("devices", (event) => {
       try {
-        const payload = JSON.parse((event as MessageEvent).data);
-        setDevices(payload.devices);
+        const payload = JSON.parse((event as MessageEvent).data) as { devices?: Device[] };
+        acceptDevices(payload.devices);
       } catch {
-        // A malformed event is ignored; the next one replaces it.
+        // The 30-second refresh remains the fallback for malformed SSE messages.
       }
     });
-    return () => source.close();
-  }, [phase, screen]);
+    return () => {
+      window.clearInterval(timer);
+      source.close();
+    };
+  }, [acceptDevices, phase, refreshCore]);
 
   if (phase === "loading") return <Splash />;
   if (phase === "login" || phase === "totp") {
     return (
       <Login
-        phase={phase}
         error={error}
         onError={setError}
         onPassword={() => setPhase("totp")}
@@ -71,13 +116,14 @@ function App() {
           setError("");
           setPhase("ready");
         }}
+        phase={phase}
       />
     );
   }
 
   return (
     <div className="shell">
-      <Sidebar screen={screen} onScreen={setScreen} />
+      <Sidebar onScreen={setScreen} screen={screen} />
       <main className="main">
         <header className="topbar">
           <div>
@@ -88,41 +134,61 @@ function App() {
             <span className="status-dot" />
             <span>{username}</span>
             <button
-              className="text-button"
+              aria-label="退出登录"
+              className="account-logout"
               onClick={() => void api.logout().then(() => setPhase("login"))}
             >
-              退出
+              <Icon name="logout" size={16} />
+              <span>退出</span>
             </button>
           </div>
         </header>
         {error && (
-          <div className="alert">
+          <div className="alert" role="alert">
             <span>{error}</span>
-            <button onClick={() => setError("")}>×</button>
+            <button aria-label="关闭提示" onClick={() => setError("")}>×</button>
           </div>
         )}
-        {screen === "dashboard" && <Dashboard devices={devices} usage={usage} />}
-        {screen === "devices" && (
-          <Devices
-            devices={devices}
-            onAdd={() => setAddOpen(true)}
-            onChanged={() => void refresh()}
-            onError={(value) => setError(value)}
-          />
-        )}
-        {screen === "usage" && <Usage devices={devices} points={usage} />}
-        {screen === "audit" && <Audit events={audit} onLoad={() => void refresh()} />}
+        <ErrorBoundary>
+          {screen === "dashboard" && (
+            <Dashboard
+              devices={devices}
+              error={error}
+              loading={coreLoading}
+              onRetry={() => void refreshCore()}
+              points={dashboardUsage}
+              rates={rates}
+            />
+          )}
+          {screen === "devices" && (
+            <Devices
+              devices={devices}
+              onAdd={() => setAddOpen(true)}
+              onChanged={() => void refreshCore()}
+              onError={setError}
+              rates={rates}
+            />
+          )}
+          {screen === "usage" && <UsagePage devices={devices} rates={rates} />}
+          {screen === "speed" && <SpeedTestPanel />}
+          {screen === "audit" && <AuditPage />}
+        </ErrorBoundary>
       </main>
-      {addOpen && (
+      <Dialog
+        description="安全注册文件由客户端在本地生成私钥；标准配置只能下载一次。"
+        onClose={() => setAddOpen(false)}
+        open={addOpen}
+        title="添加设备"
+      >
         <AddDevice
           onClose={() => setAddOpen(false)}
           onCreated={() => {
             setAddOpen(false);
-            void refresh();
+            void refreshCore();
           }}
           onError={setError}
         />
-      )}
+      </Dialog>
     </div>
   );
 }
@@ -131,6 +197,7 @@ function Splash() {
   return (
     <div className="auth-page">
       <div className="brand-mark">T</div>
+      <span className="splash-spinner" />
       <p>正在连接 TNest VPN…</p>
     </div>
   );
@@ -163,7 +230,7 @@ function Login({
         setPassword("");
         onPassword();
       } else {
-        const result = await api.totp(code);
+        const result = await api.totp(code.replace(/\s/g, ""));
         onReady(result.username);
       }
     } catch (reason) {
@@ -182,32 +249,39 @@ function Login({
         <div className="auth-copy">
           <p className="eyebrow">仅限管理员</p>
           <h1>{phase === "login" ? "欢迎回来" : "双因素验证"}</h1>
-          <p>{phase === "login" ? "使用管理员凭据继续。" : "输入认证器中的 6 位验证码或恢复码。"}</p>
+          <p>{phase === "login" ? "使用管理员凭据继续。" : "输入验证器中 TNest VPN 对应的 6 位验证码或恢复码。"}</p>
         </div>
-        {error && <div className="alert compact">{error}</div>}
+        {error && <div className="alert compact" role="alert">{error}</div>}
         <form onSubmit={submit}>
           {phase === "login" ? (
             <>
-              <label>用户名<input value={username} onChange={(e) => setUsername(e.target.value)} autoComplete="username" /></label>
-              <label>密码<input type="password" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="current-password" autoFocus /></label>
+              <label>用户名<input autoComplete="username" onChange={(event) => setUsername(event.target.value)} value={username} /></label>
+              <label>密码<input autoComplete="current-password" autoFocus onChange={(event) => setPassword(event.target.value)} type="password" value={password} /></label>
             </>
           ) : (
-            <label>验证码<input value={code} onChange={(e) => setCode(e.target.value)} inputMode="numeric" autoComplete="one-time-code" autoFocus /></label>
+            <label>验证码<input autoComplete="one-time-code" autoFocus inputMode="numeric" onChange={(event) => setCode(event.target.value)} value={code} /></label>
           )}
-          <button className="primary wide" disabled={busy}>{busy ? "验证中…" : "继续"}</button>
+          <Button className="wide" loading={busy} type="submit">继续</Button>
         </form>
       </section>
-      <p className="auth-foot">连接凭据不会存储在浏览器中</p>
+      <p className="auth-foot">认证凭据不会保存在浏览器中</p>
     </div>
   );
 }
 
-function Sidebar({ screen, onScreen }: { screen: Screen; onScreen: (value: Screen) => void }) {
-  const links: Array<[Screen, string, string]> = [
-    ["dashboard", "◫", "总览"],
-    ["devices", "⌁", "设备"],
-    ["usage", "↗", "流量"],
-    ["audit", "≡", "审计"],
+function Sidebar({
+  screen,
+  onScreen,
+}: {
+  screen: Screen;
+  onScreen: (value: Screen) => void;
+}) {
+  const links: Array<{ value: Screen; icon: IconName; label: string }> = [
+    { value: "dashboard", icon: "dashboard", label: "总览" },
+    { value: "devices", icon: "devices", label: "设备" },
+    { value: "usage", icon: "traffic", label: "流量" },
+    { value: "speed", icon: "gauge", label: "网络测试" },
+    { value: "audit", icon: "audit", label: "审计" },
   ];
   return (
     <aside className="sidebar">
@@ -215,10 +289,15 @@ function Sidebar({ screen, onScreen }: { screen: Screen; onScreen: (value: Scree
         <div className="brand-mark small">T</div>
         <div><strong>TNest</strong><span>VPN Console</span></div>
       </div>
-      <nav>
-        {links.map(([value, icon, label]) => (
-          <button className={screen === value ? "active" : ""} onClick={() => onScreen(value)} key={value}>
-            <span>{icon}</span>{label}
+      <nav aria-label="主要导航">
+        {links.map((link) => (
+          <button
+            aria-current={screen === link.value ? "page" : undefined}
+            className={screen === link.value ? "active" : ""}
+            key={link.value}
+            onClick={() => onScreen(link.value)}
+          >
+            <Icon name={link.icon} size={19} /><span>{link.label}</span>
           </button>
         ))}
       </nav>
@@ -230,41 +309,68 @@ function Sidebar({ screen, onScreen }: { screen: Screen; onScreen: (value: Scree
   );
 }
 
-function Dashboard({ devices, usage }: { devices: Device[]; usage: UsagePoint[] }) {
+function Dashboard({
+  devices,
+  points,
+  rates,
+  loading,
+  error,
+  onRetry,
+}: {
+  devices: Device[];
+  points: UsagePoint[];
+  rates: Record<string, DeviceRate>;
+  loading: boolean;
+  error: string;
+  onRetry: () => void;
+}) {
+  if (loading) return <><Skeleton height={132} /><Skeleton height={340} /></>;
+  if (error && devices.length === 0) return <Panel><ErrorState message={error} onRetry={onRetry} /></Panel>;
   const active = devices.filter((device) => device.status === "active");
   const online = active.filter(isOnline);
-  const totalUpload = active.reduce((sum, item) => sum + item.upload_bytes, 0);
-  const totalDownload = active.reduce((sum, item) => sum + item.download_bytes, 0);
+  const totalUpload = active.reduce((sum, item) => sum + safeBytes(item.upload_bytes), 0);
+  const totalDownload = active.reduce((sum, item) => sum + safeBytes(item.download_bytes), 0);
+  const liveRate = Object.values(rates).reduce(
+    (sum, rate) => ({
+      uploadBps: sum.uploadBps + rate.uploadBps,
+      downloadBps: sum.downloadBps + rate.downloadBps,
+    }),
+    { uploadBps: 0, downloadBps: 0 },
+  );
   return (
     <>
       <section className="stats-grid">
-        <Metric label="在线设备" value={`${online.length} / ${active.length}`} note="三分钟内有握手" accent />
-        <Metric label="累计下载" value={formatBytes(totalDownload)} note="服务端发送到设备" />
-        <Metric label="累计上传" value={formatBytes(totalUpload)} note="设备发送到服务端" />
-        <Metric label="隧道端口" value="51999" note="UDP · IPv4 外层" />
+        <Metric accent icon="devices" label="在线设备" note="三分钟内有握手" value={`${online.length} / ${active.length}`} />
+        <Metric icon="download" label="最近下载速率" note="WireGuard 最近采样均值" value={formatRate(liveRate.downloadBps)} />
+        <Metric icon="upload" label="最近上传速率" note="WireGuard 最近采样均值" value={formatRate(liveRate.uploadBps)} />
+        <Metric icon="traffic" label="累计流量" note="自管理统计启用以来" value={formatBytes(totalUpload + totalDownload)} />
       </section>
-      <section className="panel hero-panel">
-        <div>
-          <p className="eyebrow">过去 24 小时</p>
-          <h2>网络用量</h2>
+      <Panel>
+        <div className="panel-heading">
+          <div><p className="eyebrow">真实 WireGuard 计数</p><h2>过去 24 小时网络用量</h2></div>
+          <span className="muted">每 30 秒采样 · Asia/Shanghai 显示</span>
         </div>
-        <MiniChart points={usage} />
-      </section>
-      <section className="panel">
-        <div className="panel-title"><div><p className="eyebrow">Live peers</p><h2>最近设备</h2></div></div>
-        <DeviceRows devices={devices.slice(0, 6)} />
-      </section>
+        <UsageChart points={points} range="24h" />
+      </Panel>
+      <Panel>
+        <div className="panel-heading">
+          <div><p className="eyebrow">Live peers</p><h2>最近设备</h2></div>
+        </div>
+        <DeviceRows devices={devices.slice(0, 6)} rates={rates} />
+      </Panel>
     </>
   );
 }
 
 function Devices({
   devices,
+  rates,
   onAdd,
   onChanged,
   onError,
 }: {
   devices: Device[];
+  rates: Record<string, DeviceRate>;
   onAdd: () => void;
   onChanged: () => void;
   onError: (value: string) => void;
@@ -293,63 +399,172 @@ function Devices({
     }
   };
   return (
-    <section className="panel">
-      <div className="panel-title">
-        <div><p className="eyebrow">Peer management</p><h2>全部设备</h2></div>
-        <button className="primary" onClick={onAdd}>＋ 添加设备</button>
+    <Panel>
+      <div className="panel-heading">
+        <div><p className="eyebrow">Peer management</p><h2>全部设备</h2><p>撤销设备仍保留历史用量，在线设备使用最近三分钟握手判断。</p></div>
+        <Button icon="plus" onClick={onAdd}>添加设备</Button>
       </div>
-      <div className="device-table">
-        <div className="table-head"><span>设备</span><span>地址</span><span>流量</span><span>状态</span><span>操作</span></div>
-        {devices.map((device) => (
-          <div className="table-row" key={device.id}>
-            <DeviceName device={device} />
-            <div className="mono"><strong>{device.ipv4}</strong><small>{device.ipv6}</small></div>
-            <div><strong>↓ {formatBytes(device.download_bytes)}</strong><small>↑ {formatBytes(device.upload_bytes)}</small></div>
-            <Status device={device} />
-            <div className="row-actions">
-              <button className="text-button" disabled={device.status !== "active"} onClick={() => void rotate(device)}>轮换</button>
-              <button className="danger-link" disabled={device.status !== "active"} onClick={() => void revoke(device)}>撤销</button>
+      {devices.length === 0 ? (
+        <EmptyState description="创建第一台设备后，可在这里查看连接状态和真实流量。" title="暂无设备" />
+      ) : (
+        <div className="device-table">
+          <div className="table-head"><span>设备</span><span>地址</span><span>累计流量</span><span>最近速率</span><span>状态</span><span>操作</span></div>
+          {devices.map((device) => (
+            <div className="table-row" key={device.id}>
+              <DeviceName device={device} />
+              <div className="mono"><strong>{device.ipv4}</strong><small>{device.ipv6}</small></div>
+              <div><strong>↓ {formatBytes(safeBytes(device.download_bytes))}</strong><small>↑ {formatBytes(safeBytes(device.upload_bytes))}</small></div>
+              <div><strong>↓ {formatRate(rates[device.id]?.downloadBps ?? 0)}</strong><small>↑ {formatRate(rates[device.id]?.uploadBps ?? 0)}</small></div>
+              <DeviceStatus device={device} />
+              <div className="row-actions">
+                <Button disabled={device.status !== "active"} onClick={() => void rotate(device)} variant="ghost">轮换</Button>
+                <Button disabled={device.status !== "active"} onClick={() => void revoke(device)} variant="danger">撤销</Button>
+              </div>
             </div>
+          ))}
+        </div>
+      )}
+    </Panel>
+  );
+}
+
+function UsagePage({
+  devices,
+  rates,
+}: {
+  devices: Device[];
+  rates: Record<string, DeviceRate>;
+}) {
+  const [range, setRange] = useState<UsageRange>("24h");
+  const [deviceId, setDeviceId] = useState("");
+  const [points, setPoints] = useState<UsagePoint[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      setPoints(await api.usage({ range, deviceId }));
+      setError("");
+    } catch (reason) {
+      setError(message(reason));
+    } finally {
+      setLoading(false);
+    }
+  }, [deviceId, range]);
+  useEffect(() => {
+    void load();
+    const timer = window.setInterval(() => void load(), 30_000);
+    return () => window.clearInterval(timer);
+  }, [load]);
+  const visibleDevices = deviceId ? devices.filter((device) => device.id === deviceId) : devices;
+  const totalUpload = visibleDevices.reduce((sum, item) => sum + safeBytes(item.upload_bytes), 0);
+  const totalDownload = visibleDevices.reduce((sum, item) => sum + safeBytes(item.download_bytes), 0);
+  const rate = visibleDevices.reduce(
+    (sum, item) => ({
+      uploadBps: sum.uploadBps + (rates[item.id]?.uploadBps ?? 0),
+      downloadBps: sum.downloadBps + (rates[item.id]?.downloadBps ?? 0),
+    }),
+    { uploadBps: 0, downloadBps: 0 },
+  );
+  return (
+    <>
+      <Panel>
+        <div className="panel-heading usage-heading">
+          <div><p className="eyebrow">Usage analytics</p><h2>真实流量统计</h2><p>数据来自服务端 WireGuard peer 计数器，不包含管理服务启用前的历史。</p></div>
+          <div className="usage-controls">
+            <Tabs
+              items={[{ value: "24h", label: "24小时" }, { value: "7d", label: "7天" }, { value: "30d", label: "30天" }]}
+              label="统计周期"
+              onChange={setRange}
+              value={range}
+            />
+            <label className="select-label">
+              <span>设备</span>
+              <select onChange={(event) => setDeviceId(event.target.value)} value={deviceId}>
+                <option value="">全部设备</option>
+                {devices.map((device) => <option key={device.id} value={device.id}>{device.name}{device.status === "revoked" ? "（已撤销）" : ""}</option>)}
+              </select>
+            </label>
           </div>
-        ))}
-      </div>
-    </section>
+        </div>
+        {loading ? <Skeleton height={350} /> : error ? <ErrorState message={error} onRetry={() => void load()} /> : <UsageChart points={points} range={range} />}
+      </Panel>
+      <section className="stats-grid usage-stats">
+        <Metric icon="download" label="累计下载" note="自统计启用以来" value={formatBytes(totalDownload)} />
+        <Metric icon="upload" label="累计上传" note="自统计启用以来" value={formatBytes(totalUpload)} />
+        <Metric icon="download" label="最近下载速率" note="最近真实采样均值" value={formatRate(rate.downloadBps)} />
+        <Metric icon="upload" label="最近上传速率" note="最近真实采样均值" value={formatRate(rate.uploadBps)} />
+      </section>
+    </>
   );
 }
 
-function Usage({ devices, points }: { devices: Device[]; points: UsagePoint[] }) {
+function AuditPage() {
+  const [events, setEvents] = useState<AuditEvent[]>([]);
+  const [filter, setFilter] = useState<"all" | "auth" | "device">("all");
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      setEvents(await api.audit());
+      setError("");
+    } catch (reason) {
+      setError(message(reason));
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+  useEffect(() => {
+    void load();
+  }, [load]);
+  const filtered = useMemo(
+    () => events.filter((event) => filter === "all" || event.action?.startsWith(`${filter}.`)),
+    [events, filter],
+  );
   return (
-    <section className="panel hero-panel">
-      <div className="panel-title">
-        <div><p className="eyebrow">Asia/Shanghai</p><h2>24 小时流量</h2></div>
-        <span className="muted">每 30 秒采集，按小时汇总</span>
+    <Panel>
+      <div className="panel-heading">
+        <div><p className="eyebrow">Security log</p><h2>管理审计</h2><p>只记录操作元数据，不记录密码、TOTP、密钥、PSK或配置正文。</p></div>
+        <Button icon="refresh" loading={loading} onClick={() => void load()} variant="secondary">刷新</Button>
       </div>
-      <MiniChart points={points} large />
-      <div className="usage-list">
-        {devices.filter((d) => d.status === "active").map((device) => (
-          <div key={device.id}><DeviceName device={device} /><strong>↓ {formatBytes(device.download_bytes)} · ↑ {formatBytes(device.upload_bytes)}</strong></div>
-        ))}
-      </div>
-    </section>
+      <Tabs
+        items={[{ value: "all", label: "全部" }, { value: "auth", label: "登录安全" }, { value: "device", label: "设备操作" }]}
+        label="审计类型"
+        onChange={setFilter}
+        value={filter}
+      />
+      {loading ? <Skeleton height={260} /> : error ? (
+        <ErrorState message={error} onRetry={() => void load()} />
+      ) : filtered.length === 0 ? (
+        <EmptyState description={events.length === 0 ? "尚未产生管理操作记录。" : "当前筛选条件下没有记录。"} title="暂无审计记录" />
+      ) : (
+        <div className="audit-table">
+          <div className="audit-head"><span>操作</span><span>管理员</span><span>来源 IP</span><span>目标</span><span>时间</span></div>
+          {filtered.map((event) => (
+            <div className="audit-row" key={event.id}>
+              <div className="audit-action"><span><Icon name={event.action?.startsWith("auth.") ? "shield" : "check"} size={17} /></span><div><strong>{actionLabel(event.action)}</strong>{event.detail && <small>{event.detail}</small>}</div></div>
+              <span>{event.actor || "系统"}</span>
+              <span className="mono">{event.remote_ip || "本机"}</span>
+              <span className="mono">{event.device_id || "—"}</span>
+              <time dateTime={event.at}>{safeDate(event.at)}</time>
+            </div>
+          ))}
+        </div>
+      )}
+    </Panel>
   );
 }
 
-function Audit({ events, onLoad }: { events: AuditEvent[]; onLoad: () => void }) {
-  useEffect(onLoad, []);
-  return (
-    <section className="panel">
-      <div className="panel-title"><div><p className="eyebrow">Security log</p><h2>管理审计</h2></div></div>
-      <div className="audit-list">
-        {events.length === 0 && <p className="empty">暂无审计记录</p>}
-        {events.map((event) => (
-          <div key={event.id}><span className="audit-icon">✓</span><div><strong>{actionLabel(event.action)}</strong><small>{new Date(event.at).toLocaleString("zh-CN")} · {event.actor} · {event.remote_ip || "本机"}</small></div></div>
-        ))}
-      </div>
-    </section>
-  );
-}
-
-function AddDevice({ onClose, onCreated, onError }: { onClose: () => void; onCreated: () => void; onError: (value: string) => void }) {
+function AddDevice({
+  onClose,
+  onCreated,
+  onError,
+}: {
+  onClose: () => void;
+  onCreated: () => void;
+  onError: (value: string) => void;
+}) {
   const [name, setName] = useState("");
   const [platform, setPlatform] = useState("windows");
   const [mode, setMode] = useState("invite");
@@ -371,77 +586,114 @@ function AddDevice({ onClose, onCreated, onError }: { onClose: () => void; onCre
     }
   };
   return (
-    <div className="modal-backdrop" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
-      <section className="modal">
-        <button className="modal-close" onClick={onClose}>×</button>
-        <p className="eyebrow">New peer</p><h2>添加设备</h2>
-        <p className="muted">安全注册文件由客户端在本地生成私钥；标准配置仅能下载一次。</p>
-        <form onSubmit={submit}>
-          <label>设备名称<input value={name} onChange={(e) => setName(e.target.value)} placeholder="例如：办公电脑" autoFocus required /></label>
-          <label>平台<select value={platform} onChange={(e) => setPlatform(e.target.value)}><option value="windows">Windows</option><option value="android">Android</option><option value="ios">iOS</option><option value="macos">macOS</option><option value="other">其他</option></select></label>
-          <label>配置方式<select value={mode} onChange={(e) => setMode(e.target.value)}><option value="invite">TNest 安全注册文件（推荐）</option><option value="standard">标准 WireGuard .conf</option><option value="qr">WireGuard 二维码 PNG</option></select></label>
-          <label>当前 TOTP<input value={totp} onChange={(e) => setTotp(e.target.value)} inputMode="numeric" autoComplete="one-time-code" required /></label>
-          <button className="primary wide" disabled={busy}>{busy ? "正在创建…" : "创建并下载"}</button>
-        </form>
-      </section>
+    <form onSubmit={submit}>
+      <label>设备名称<input autoFocus onChange={(event) => setName(event.target.value)} placeholder="例如：办公电脑" required value={name} /></label>
+      <label>平台<select onChange={(event) => setPlatform(event.target.value)} value={platform}><option value="windows">Windows</option><option value="android">Android</option><option value="ios">iOS</option><option value="macos">macOS</option><option value="other">其他</option></select></label>
+      <label>配置方式<select onChange={(event) => setMode(event.target.value)} value={mode}><option value="invite">TNest 安全注册文件（推荐）</option><option value="standard">标准 WireGuard .conf</option><option value="qr">WireGuard 二维码 PNG</option></select></label>
+      <label>当前 TOTP<input autoComplete="one-time-code" inputMode="numeric" onChange={(event) => setTotp(event.target.value)} required value={totp} /></label>
+      <div className="dialog-actions"><Button onClick={onClose} variant="secondary">取消</Button><Button loading={busy} type="submit">创建并下载</Button></div>
+    </form>
+  );
+}
+
+function DeviceRows({
+  devices,
+  rates,
+}: {
+  devices: Device[];
+  rates: Record<string, DeviceRate>;
+}) {
+  if (devices.length === 0) return <EmptyState description="尚未导入或创建设备。" title="暂无设备" />;
+  return (
+    <div className="device-rows">
+      {devices.map((device) => (
+        <div key={device.id}>
+          <DeviceName device={device} />
+          <div className="device-live-rate"><strong>↓ {formatRate(rates[device.id]?.downloadBps ?? 0)}</strong><small>↑ {formatRate(rates[device.id]?.uploadBps ?? 0)}</small></div>
+          <span className="mono">{device.ipv4}</span>
+          <DeviceStatus device={device} />
+        </div>
+      ))}
     </div>
   );
 }
 
-function DeviceRows({ devices }: { devices: Device[] }) {
-  return <div className="device-rows">{devices.map((device) => <div key={device.id}><DeviceName device={device} /><span className="mono">{device.ipv4}</span><Status device={device} /></div>)}</div>;
-}
-
 function DeviceName({ device }: { device: Device }) {
-  return <div className="device-name"><span className={`platform ${device.platform}`}>{platformIcon(device.platform)}</span><div><strong>{device.name}</strong><small>{platformName[device.platform] || "其他"}{device.external_private_key ? " · 已有配置" : ""}</small></div></div>;
-}
-
-function Status({ device }: { device: Device }) {
-  const label = device.status === "pending" ? "待注册" : device.status === "revoked" ? "已撤销" : isOnline(device) ? "在线" : "离线";
-  return <span className={`status ${label === "在线" ? "online" : ""}`}>{label}</span>;
-}
-
-function Metric({ label, value, note, accent = false }: { label: string; value: string; note: string; accent?: boolean }) {
-  return <div className={`metric ${accent ? "accent" : ""}`}><span>{label}</span><strong>{value}</strong><small>{note}</small></div>;
-}
-
-function MiniChart({ points, large = false }: { points: UsagePoint[]; large?: boolean }) {
-  const buckets = useMemo(() => {
-    const grouped = new Map<string, number>();
-    points.forEach((point) => grouped.set(point.bucket, (grouped.get(point.bucket) || 0) + point.upload_bytes + point.download_bytes));
-    return [...grouped.entries()].sort(([a], [b]) => a.localeCompare(b)).slice(-24);
-  }, [points]);
-  const max = Math.max(...buckets.map(([, value]) => value), 1);
   return (
-    <div className={`chart ${large ? "large" : ""}`}>
-      {buckets.length === 0 && <span className="empty">等待流量样本</span>}
-      {buckets.map(([bucket, value]) => <div key={bucket} title={`${new Date(bucket).toLocaleString("zh-CN")} · ${formatBytes(value)}`}><i style={{ height: `${Math.max(4, value / max * 100)}%` }} /></div>)}
+    <div className="device-name">
+      <span className={`platform ${device.platform}`}>{platformIcon(device.platform)}</span>
+      <div><strong>{device.name}</strong><small>{platformName[device.platform] || "其他"}{device.external_private_key ? " · 已有配置" : ""}</small></div>
+    </div>
+  );
+}
+
+function DeviceStatus({ device }: { device: Device }) {
+  if (device.status === "pending") return <Status tone="warning">待注册</Status>;
+  if (device.status === "revoked") return <Status tone="danger">已撤销</Status>;
+  return isOnline(device) ? <Status tone="online">在线</Status> : <Status>离线</Status>;
+}
+
+function Metric({
+  label,
+  value,
+  note,
+  icon,
+  accent = false,
+}: {
+  label: string;
+  value: string;
+  note: string;
+  icon: IconName;
+  accent?: boolean;
+}) {
+  return (
+    <div className={`metric ${accent ? "accent" : ""}`}>
+      <span><Icon name={icon} size={16} />{label}</span>
+      <strong>{value}</strong>
+      <small>{note}</small>
     </div>
   );
 }
 
 function isOnline(device: Device) {
-  return Boolean(device.last_handshake && Date.now() - new Date(device.last_handshake).getTime() < 3 * 60 * 1000);
+  const time = device.last_handshake ? new Date(device.last_handshake).getTime() : Number.NaN;
+  return Number.isFinite(time) && Date.now() - time < 3 * 60 * 1000;
 }
-function formatBytes(value: number) {
-  if (value < 1024) return `${value} B`;
-  const units = ["KiB", "MiB", "GiB", "TiB"];
-  let size = value / 1024;
-  let unit = 0;
-  while (size >= 1024 && unit < units.length - 1) { size /= 1024; unit++; }
-  return `${size.toFixed(size >= 100 ? 0 : size >= 10 ? 1 : 2)} ${units[unit]}`;
-}
+
 function platformIcon(platform: string) {
   return platform === "windows" ? "⊞" : platform === "android" ? "A" : platform === "ios" ? "●" : platform === "macos" ? "◆" : "◇";
 }
+
 function title(screen: Screen) {
-  return ({ dashboard: "运行总览", devices: "设备管理", usage: "流量统计", audit: "安全审计" } as const)[screen];
+  return ({
+    dashboard: "运行总览",
+    devices: "设备管理",
+    usage: "流量统计",
+    speed: "网络测试",
+    audit: "安全审计",
+  } as const)[screen];
 }
-function actionLabel(action: string) {
-  return ({ "device.invite_created": "已创建安全注册文件", "device.standard_config_created": "已创建标准配置", "device.qr_created": "已创建一次性二维码", "device.rotation_prepared": "已创建轮换注册文件", "device.enrolled": "设备完成注册或轮换", "device.revoked": "设备已撤销" } as Record<string, string>)[action] || action;
+
+function actionLabel(action: string | undefined) {
+  return ({
+    "auth.login": "管理员登录成功",
+    "auth.logout": "管理员退出",
+    "device.invite_created": "已创建安全注册文件",
+    "device.standard_config_created": "已创建标准配置",
+    "device.qr_created": "已创建一次性二维码",
+    "device.rotation_prepared": "已创建轮换注册文件",
+    "device.enrolled": "设备完成注册或轮换",
+    "device.revoked": "设备已撤销",
+  } as Record<string, string>)[action ?? ""] || action || "未知操作";
 }
+
+function safeDate(value: string | undefined) {
+  const date = value ? new Date(value) : new Date(Number.NaN);
+  return Number.isNaN(date.getTime())
+    ? "未知时间"
+    : date.toLocaleString("zh-CN", { timeZone: "Asia/Shanghai", hour12: false });
+}
+
 function message(reason: unknown) {
   return reason instanceof Error ? reason.message : "操作失败";
 }
-
-export default App;

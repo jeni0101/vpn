@@ -21,6 +21,7 @@ type Device struct {
 	RevokedAt       *time.Time `json:"revoked_at,omitempty"`
 	QuarantineUntil *time.Time `json:"quarantine_until,omitempty"`
 	LastHandshake   *time.Time `json:"last_handshake,omitempty"`
+	StatsUpdatedAt  *time.Time `json:"stats_updated_at,omitempty"`
 	UploadBytes     int64      `json:"upload_bytes"`
 	DownloadBytes   int64      `json:"download_bytes"`
 }
