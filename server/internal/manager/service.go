@@ -17,8 +17,8 @@ import (
 
 	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
 
-	"github.com/jeni0101/vpn/server/internal/config"
 	"github.com/jeni0101/vpn/server/internal/catalog"
+	"github.com/jeni0101/vpn/server/internal/config"
 	"github.com/jeni0101/vpn/server/internal/model"
 	"github.com/jeni0101/vpn/server/internal/security"
 	"github.com/jeni0101/vpn/server/internal/store"
@@ -27,13 +27,13 @@ import (
 var safeName = regexp.MustCompile(`^[\p{L}\p{N}][\p{L}\p{N} ._-]{0,62}$`)
 
 type Service struct {
-	cfg    config.Manager
-	store  *store.Store
-	sealer *security.Sealer
-	wg     WireGuard
+	cfg           config.Manager
+	store         *store.Store
+	sealer        *security.Sealer
+	wg            WireGuard
 	catalogSigner *catalog.Signer
-	mu     sync.Mutex
-	now    func() time.Time
+	mu            sync.Mutex
+	now           func() time.Time
 }
 
 func (s *Service) SetCatalogSigner(signer *catalog.Signer) {
@@ -149,8 +149,8 @@ type ClaimResult struct {
 }
 
 type RegionKeyRequest struct {
-	RegionCode  string `json:"region_code"`
-	PublicKey   string `json:"public_key"`
+	RegionCode   string `json:"region_code"`
+	PublicKey    string `json:"public_key"`
 	PresharedKey string `json:"preshared_key"`
 }
 
@@ -230,14 +230,14 @@ func (s *Service) CreateInvite(ctx context.Context, request CreateRequest) (Invi
 	return InviteResult{
 		Device: device,
 		Invite: model.InviteFile{
-			Version:       2,
-			Type:          "tnest-vpn-enrollment",
-			ManagementURL: s.cfg.ManagementURL,
-			Token:         token,
-			ExpiresAt:     enrollment.ExpiresAt,
-			DeviceName:    device.Name,
+			Version:           2,
+			Type:              "tnest-vpn-enrollment",
+			ManagementURL:     s.cfg.ManagementURL,
+			Token:             token,
+			ExpiresAt:         enrollment.ExpiresAt,
+			DeviceName:        device.Name,
 			CatalogSigningKey: s.CatalogPublicKey(),
-			Purpose:       "enroll",
+			Purpose:           "enroll",
 		},
 	}, nil
 }
@@ -421,8 +421,8 @@ func (s *Service) RegionConfiguration(
 	}
 	return model.RegionConfiguration{
 		RegionCode: credential.RegionCode,
-		Address: []string{credential.IPv4 + "/32", credential.IPv6 + "/128"},
-		DNS: append([]string(nil), region.DNS...), MTU: region.MTU,
+		Address:    []string{credential.IPv4 + "/32", credential.IPv6 + "/128"},
+		DNS:        append([]string(nil), region.DNS...), MTU: region.MTU,
 		AllowedIPs: []string{"0.0.0.0/0", "::/0"}, PersistentKeepalive: 25,
 		ConfigVersion: region.ConfigVersion, Nodes: catalogNodes,
 	}, nil

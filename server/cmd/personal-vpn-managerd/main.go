@@ -14,8 +14,8 @@ import (
 
 	"golang.zx2c4.com/wireguard/wgctrl"
 
-	"github.com/jeni0101/vpn/server/internal/config"
 	"github.com/jeni0101/vpn/server/internal/catalog"
+	"github.com/jeni0101/vpn/server/internal/config"
 	"github.com/jeni0101/vpn/server/internal/manager"
 	"github.com/jeni0101/vpn/server/internal/security"
 	"github.com/jeni0101/vpn/server/internal/store"

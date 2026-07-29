@@ -158,10 +158,10 @@ func (s *Store) Catalog(ctx context.Context, now time.Time) (model.Catalog, erro
 		return model.Catalog{}, err
 	}
 	result := model.Catalog{
-		Version: now.UTC().Unix(),
-		IssuedAt: now.UTC(),
+		Version:   now.UTC().Unix(),
+		IssuedAt:  now.UTC(),
 		ExpiresAt: now.UTC().Add(24 * time.Hour),
-		Regions: make([]model.CatalogRegion, 0, len(regions)),
+		Regions:   make([]model.CatalogRegion, 0, len(regions)),
 	}
 	for _, region := range regions {
 		nodes, err := s.Nodes(ctx, region.Code, false)
@@ -174,7 +174,7 @@ func (s *Store) Catalog(ctx context.Context, now time.Time) (model.Catalog, erro
 			IPv4Network: region.IPv4Network, IPv6Network: region.IPv6Network,
 			DNS: region.DNS, MTU: region.MTU,
 			ConfigVersion: region.ConfigVersion,
-			Nodes: make([]model.CatalogNode, 0, len(nodes)),
+			Nodes:         make([]model.CatalogNode, 0, len(nodes)),
 		}
 		for _, node := range nodes {
 			if node.Endpoint == "" || node.ProbeURL == "" || node.ServerPublicKey == "" {
@@ -278,9 +278,9 @@ func (s *Store) DeviceSlot(ctx context.Context, deviceID string) (int, error) {
 }
 
 type DesiredCredential struct {
-	Device    model.Device
+	Device     model.Device
 	Credential model.DeviceRegionCredential
-	SealedPSK []byte
+	SealedPSK  []byte
 }
 
 func (s *Store) DesiredCredentials(

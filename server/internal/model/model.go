@@ -36,22 +36,22 @@ type UsagePoint struct {
 }
 
 const (
-	ExitModeDualStack        = "dual_stack"
-	ExitModeIPv4BlockIPv6    = "ipv4_exit_ipv6_blocked"
-	RegionStatusPending      = "pending"
-	RegionStatusActive       = "active"
-	RegionStatusRevoked      = "revoked"
-	NodeHealthUnknown        = "unknown"
-	NodeHealthHealthy        = "healthy"
-	NodeHealthDegraded       = "degraded"
-	NodeHealthOffline        = "offline"
+	ExitModeDualStack     = "dual_stack"
+	ExitModeIPv4BlockIPv6 = "ipv4_exit_ipv6_blocked"
+	RegionStatusPending   = "pending"
+	RegionStatusActive    = "active"
+	RegionStatusRevoked   = "revoked"
+	NodeHealthUnknown     = "unknown"
+	NodeHealthHealthy     = "healthy"
+	NodeHealthDegraded    = "degraded"
+	NodeHealthOffline     = "offline"
 )
 
 type Region struct {
-	Code          string `json:"code"`
-	DisplayName   string `json:"display_name"`
-	SortOrder     int    `json:"sort_order"`
-	ExitMode      string `json:"exit_mode"`
+	Code          string   `json:"code"`
+	DisplayName   string   `json:"display_name"`
+	SortOrder     int      `json:"sort_order"`
+	ExitMode      string   `json:"exit_mode"`
 	IPv4Network   string   `json:"ipv4_network"`
 	IPv6Network   string   `json:"ipv6_network"`
 	DNS           []string `json:"dns"`
@@ -94,23 +94,23 @@ type RegionConfiguration struct {
 }
 
 type DesiredPeer struct {
-	DeviceID    string `json:"device_id"`
-	DeviceName  string `json:"device_name"`
-	PublicKey   string `json:"public_key"`
+	DeviceID     string `json:"device_id"`
+	DeviceName   string `json:"device_name"`
+	PublicKey    string `json:"public_key"`
 	PresharedKey string `json:"preshared_key"`
-	IPv4        string `json:"ipv4"`
-	IPv6        string `json:"ipv6"`
+	IPv4         string `json:"ipv4"`
+	IPv6         string `json:"ipv6"`
 }
 
 type NodeDesiredState struct {
-	Version      int64         `json:"version"`
-	NodeID       string        `json:"node_id"`
-	RegionCode   string        `json:"region_code"`
-	InterfaceIPv4 string       `json:"interface_ipv4"`
-	InterfaceIPv6 string       `json:"interface_ipv6"`
-	ExitMode     string        `json:"exit_mode"`
-	ListenPort   int           `json:"listen_port"`
-	Peers        []DesiredPeer `json:"peers"`
+	Version       int64         `json:"version"`
+	NodeID        string        `json:"node_id"`
+	RegionCode    string        `json:"region_code"`
+	InterfaceIPv4 string        `json:"interface_ipv4"`
+	InterfaceIPv6 string        `json:"interface_ipv6"`
+	ExitMode      string        `json:"exit_mode"`
+	ListenPort    int           `json:"listen_port"`
+	Peers         []DesiredPeer `json:"peers"`
 }
 
 type Catalog struct {
@@ -161,14 +161,14 @@ type Enrollment struct {
 }
 
 type InviteFile struct {
-	Version       int       `json:"version"`
-	Type          string    `json:"type"`
-	ManagementURL string    `json:"management_url"`
-	Token         string    `json:"token"`
-	ExpiresAt     time.Time `json:"expires_at"`
-	DeviceName    string    `json:"device_name"`
-	CatalogSigningKey string `json:"catalog_signing_key,omitempty"`
-	Purpose       string    `json:"purpose,omitempty"`
+	Version           int       `json:"version"`
+	Type              string    `json:"type"`
+	ManagementURL     string    `json:"management_url"`
+	Token             string    `json:"token"`
+	ExpiresAt         time.Time `json:"expires_at"`
+	DeviceName        string    `json:"device_name"`
+	CatalogSigningKey string    `json:"catalog_signing_key,omitempty"`
+	Purpose           string    `json:"purpose,omitempty"`
 }
 
 type AuditEvent struct {

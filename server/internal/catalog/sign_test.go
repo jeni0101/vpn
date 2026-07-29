@@ -25,7 +25,7 @@ func TestSignedCatalogRejectsTampering(t *testing.T) {
 			Code: "SG", DisplayName: "Singapore", ExitMode: model.ExitModeDualStack,
 			Nodes: []model.CatalogNode{{
 				ID: "sg-sin-01", Endpoint: "203.0.113.10:53147",
-				ProbeURL: "https://vpn.example.com/latency",
+				ProbeURL:        "https://vpn.example.com/latency",
 				ServerPublicKey: "public", Priority: 10,
 			}},
 		}},

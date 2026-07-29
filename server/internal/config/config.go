@@ -11,24 +11,24 @@ import (
 )
 
 type Manager struct {
-	SocketPath      string
-	DatabasePath    string
-	MasterKeyPath   string
-	WGConfigPath    string
-	WGInterface     string
-	ManagementURL   string
-	Endpoint        string
-	ServerPublicKey string
-	BackupRecipient string
+	SocketPath            string
+	DatabasePath          string
+	MasterKeyPath         string
+	WGConfigPath          string
+	WGInterface           string
+	ManagementURL         string
+	Endpoint              string
+	ServerPublicKey       string
+	BackupRecipient       string
 	CatalogSigningKeyPath string
-	RegionCode      string
-	NodeID          string
-	NodeProbeURL    string
-	ExitMode        string
-	ApplyChanges    bool
-	PollInterval    time.Duration
-	Quarantine      time.Duration
-	InviteTTL       time.Duration
+	RegionCode            string
+	NodeID                string
+	NodeProbeURL          string
+	ExitMode              string
+	ApplyChanges          bool
+	PollInterval          time.Duration
+	Quarantine            time.Duration
+	InviteTTL             time.Duration
 }
 
 type Web struct {
@@ -57,14 +57,14 @@ func ManagerFromEnv() (Manager, error) {
 			"TNEST_CATALOG_SIGNING_KEY",
 			"/etc/personal-vpn/catalog-signing.key",
 		),
-		RegionCode: env("TNEST_REGION_CODE", "SG"),
-		NodeID: env("TNEST_NODE_ID", "sg-sin-01"),
+		RegionCode:   env("TNEST_REGION_CODE", "SG"),
+		NodeID:       env("TNEST_NODE_ID", "sg-sin-01"),
 		NodeProbeURL: os.Getenv("TNEST_NODE_PROBE_URL"),
-		ExitMode: env("TNEST_EXIT_MODE", "dual_stack"),
-		ApplyChanges:    envBool("TNEST_APPLY_CHANGES", false),
-		PollInterval:    30 * time.Second,
-		Quarantine:      7 * 24 * time.Hour,
-		InviteTTL:       10 * time.Minute,
+		ExitMode:     env("TNEST_EXIT_MODE", "dual_stack"),
+		ApplyChanges: envBool("TNEST_APPLY_CHANGES", false),
+		PollInterval: 30 * time.Second,
+		Quarantine:   7 * 24 * time.Hour,
+		InviteTTL:    10 * time.Minute,
 	}
 	if cfg.NodeProbeURL == "" {
 		cfg.NodeProbeURL = cfg.ManagementURL + "/latency"
