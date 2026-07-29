@@ -7,8 +7,7 @@ import {
   type FormEvent,
 } from "react";
 import { api } from "./api";
-import { SpeedTestPanel } from "./SpeedTestPanel";
-import type { AuditEvent, Device, UsagePoint } from "./types";
+import type { AuditEvent, Device, Region, UsagePoint, VPNNode } from "./types";
 import {
   Button,
   Dialog,
@@ -30,7 +29,7 @@ import {
   type UsageRange,
 } from "./usage";
 
-type Screen = "dashboard" | "devices" | "usage" | "speed" | "audit";
+type Screen = "dashboard" | "regions" | "devices" | "usage" | "audit";
 type AuthPhase = "loading" | "login" | "totp" | "ready";
 
 const platformName: Record<string, string> = {
@@ -169,8 +168,8 @@ export default function App() {
               rates={rates}
             />
           )}
+          {screen === "regions" && <RegionsPage />}
           {screen === "usage" && <UsagePage devices={devices} rates={rates} />}
-          {screen === "speed" && <SpeedTestPanel />}
           {screen === "audit" && <AuditPage />}
         </ErrorBoundary>
       </main>
@@ -278,9 +277,9 @@ function Sidebar({
 }) {
   const links: Array<{ value: Screen; icon: IconName; label: string }> = [
     { value: "dashboard", icon: "dashboard", label: "总览" },
+    { value: "regions", icon: "server", label: "地区" },
     { value: "devices", icon: "devices", label: "设备" },
     { value: "usage", icon: "traffic", label: "流量" },
-    { value: "speed", icon: "gauge", label: "网络测试" },
     { value: "audit", icon: "audit", label: "审计" },
   ];
   return (
@@ -499,6 +498,80 @@ function UsagePage({
   );
 }
 
+function RegionsPage() {
+  const [regions, setRegions] = useState<Region[]>([]);
+  const [nodes, setNodes] = useState<VPNNode[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const [nextRegions, nextNodes] = await Promise.all([api.regions(), api.nodes()]);
+      setRegions(nextRegions);
+      setNodes(nextNodes);
+      setError("");
+    } catch (reason) {
+      setError(message(reason));
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+  useEffect(() => { void load(); }, [load]);
+  if (loading) return <><Skeleton height={132} /><Skeleton height={320} /></>;
+  if (error) return <Panel><ErrorState message={error} onRetry={() => void load()} /></Panel>;
+  return (
+    <Panel>
+      <div className="panel-heading">
+        <div>
+          <p className="eyebrow">Regions and nodes</p>
+          <h2>地区与节点</h2>
+          <p>客户端只显示地区；节点按健康状态、优先级和延迟自动选择。</p>
+        </div>
+        <Button icon="refresh" onClick={() => void load()} variant="secondary">刷新</Button>
+      </div>
+      <div className="region-list">
+        {regions.map((region) => {
+          const regionNodes = nodes.filter((node) => node.region_code === region.code);
+          return (
+            <section className="region-card" key={region.code}>
+              <header>
+                <div>
+                  <strong>{region.display_name}</strong>
+                  <small>{region.code} · 配置 v{region.config_version}</small>
+                </div>
+                <Status tone={region.enabled ? "online" : "warning"}>
+                  {region.enabled ? "已启用" : "未启用"}
+                </Status>
+              </header>
+              <p>{region.exit_mode === "dual_stack"
+                ? "IPv4 / IPv6 双栈出口"
+                : "IPv4 出口，IPv6 安全阻断"}</p>
+              <div className="region-nodes">
+                {regionNodes.length === 0 && <span>尚未登记节点</span>}
+                {regionNodes.map((node) => (
+                  <div key={node.id}>
+                    <div>
+                      <strong>{node.id}</strong>
+                      <small>{node.endpoint || "Endpoint 待配置"}</small>
+                    </div>
+                    <Status tone={
+                      !node.enabled ? "warning" :
+                        node.health === "healthy" ? "online" :
+                          node.health === "offline" ? "danger" : "neutral"
+                    }>
+                      {!node.enabled ? "禁用" : node.health}
+                    </Status>
+                  </div>
+                ))}
+              </div>
+            </section>
+          );
+        })}
+      </div>
+    </Panel>
+  );
+}
+
 function AuditPage() {
   const [events, setEvents] = useState<AuditEvent[]>([]);
   const [filter, setFilter] = useState<"all" | "auth" | "device">("all");
@@ -667,9 +740,9 @@ function platformIcon(platform: string) {
 function title(screen: Screen) {
   return ({
     dashboard: "运行总览",
+    regions: "地区与节点",
     devices: "设备管理",
     usage: "流量统计",
-    speed: "网络测试",
     audit: "安全审计",
   } as const)[screen];
 }

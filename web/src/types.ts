@@ -33,3 +33,29 @@ export interface AuditEvent {
   remote_ip?: string;
   detail?: string;
 }
+
+export type ExitMode = "dual_stack" | "ipv4_exit_ipv6_blocked";
+
+export interface Region {
+  code: string;
+  display_name: string;
+  sort_order: number;
+  exit_mode: ExitMode;
+  enabled: boolean;
+  config_version: number;
+}
+
+export type NodeHealth = "unknown" | "healthy" | "degraded" | "offline";
+
+export interface VPNNode {
+  id: string;
+  region_code: string;
+  endpoint: string;
+  probe_url: string;
+  server_public_key: string;
+  priority: number;
+  enabled: boolean;
+  health: NodeHealth;
+  version?: string;
+  last_report_at?: string;
+}

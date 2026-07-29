@@ -53,7 +53,7 @@ func main() {
 	}
 	cancel()
 	app, err := webapp.New(authStore, managerClient, logger, cfg.SecureCookies,
-		cfg.PublicDir, cfg.ReleasesPath)
+		cfg.PublicDir, cfg.ReleasesPath, cfg.NodeAPIToken)
 	if err != nil {
 		logger.Fatal(err)
 	}

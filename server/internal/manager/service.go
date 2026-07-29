@@ -7,7 +7,10 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"net"
+	"net/netip"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -15,6 +18,7 @@ import (
 	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
 
 	"github.com/jeni0101/vpn/server/internal/config"
+	"github.com/jeni0101/vpn/server/internal/catalog"
 	"github.com/jeni0101/vpn/server/internal/model"
 	"github.com/jeni0101/vpn/server/internal/security"
 	"github.com/jeni0101/vpn/server/internal/store"
@@ -27,8 +31,86 @@ type Service struct {
 	store  *store.Store
 	sealer *security.Sealer
 	wg     WireGuard
+	catalogSigner *catalog.Signer
 	mu     sync.Mutex
 	now    func() time.Time
+}
+
+func (s *Service) SetCatalogSigner(signer *catalog.Signer) {
+	s.catalogSigner = signer
+}
+
+func (s *Service) EnsureLocalNode(ctx context.Context) error {
+	regions, err := s.store.Regions(ctx, true)
+	if err != nil {
+		return err
+	}
+	found := false
+	for _, region := range regions {
+		if region.Code == s.cfg.RegionCode {
+			found = true
+			break
+		}
+	}
+	if !found {
+		if err := s.store.UpsertRegion(ctx, model.Region{
+			Code: s.cfg.RegionCode, DisplayName: s.cfg.RegionCode,
+			SortOrder: 100, ExitMode: s.cfg.ExitMode,
+			Enabled: false, ConfigVersion: 1,
+		}); err != nil {
+			return err
+		}
+	}
+	return s.store.UpsertNode(ctx, model.Node{
+		ID: s.cfg.NodeID, RegionCode: s.cfg.RegionCode,
+		Endpoint: s.cfg.Endpoint, ProbeURL: s.cfg.NodeProbeURL,
+		ServerPublicKey: s.cfg.ServerPublicKey, Priority: 10,
+		Enabled: s.cfg.RegionCode == "SG", Health: model.NodeHealthHealthy,
+	})
+}
+
+func (s *Service) Regions(ctx context.Context, includeDisabled bool) ([]model.Region, error) {
+	return s.store.Regions(ctx, includeDisabled)
+}
+
+func (s *Service) Nodes(ctx context.Context, regionCode string, includeDisabled bool) ([]model.Node, error) {
+	return s.store.Nodes(ctx, regionCode, includeDisabled)
+}
+
+func (s *Service) UpsertRegion(ctx context.Context, region model.Region) error {
+	return s.store.UpsertRegion(ctx, region)
+}
+
+func (s *Service) UpsertNode(ctx context.Context, node model.Node) error {
+	return s.store.UpsertNode(ctx, node)
+}
+
+func (s *Service) Catalog(ctx context.Context) (model.Catalog, error) {
+	if s.catalogSigner == nil {
+		return model.Catalog{}, errors.New("catalog signing is unavailable")
+	}
+	value, err := s.store.Catalog(ctx, s.now())
+	if err != nil {
+		return model.Catalog{}, err
+	}
+	if err := s.catalogSigner.Sign(&value); err != nil {
+		return model.Catalog{}, err
+	}
+	return value, nil
+}
+
+func (s *Service) CatalogPublicKey() string {
+	if s.catalogSigner == nil {
+		return ""
+	}
+	return s.catalogSigner.PublicKey()
+}
+
+func (s *Service) SaveNodeReport(ctx context.Context, report model.NodeReport) error {
+	if report.ReportedAt.IsZero() {
+		report.ReportedAt = s.now().UTC()
+	}
+	return s.store.SaveNodeReport(ctx, report)
 }
 
 type CreateRequest struct {
@@ -64,6 +146,28 @@ type ClientSettings struct {
 type ClaimResult struct {
 	Device        model.Device   `json:"device"`
 	Configuration ClientSettings `json:"configuration"`
+}
+
+type RegionKeyRequest struct {
+	RegionCode  string `json:"region_code"`
+	PublicKey   string `json:"public_key"`
+	PresharedKey string `json:"preshared_key"`
+}
+
+type ClaimV2Request struct {
+	Token       string             `json:"token"`
+	Credentials []RegionKeyRequest `json:"credentials"`
+}
+
+type ClaimV2Result struct {
+	Device      model.Device                `json:"device"`
+	DeviceToken string                      `json:"device_token"`
+	Catalog     model.Catalog               `json:"catalog"`
+	Regions     []model.RegionConfiguration `json:"regions"`
+}
+
+type EnrollRegionResult struct {
+	Configuration model.RegionConfiguration `json:"configuration"`
 }
 
 type ImportRequest struct {
@@ -126,14 +230,336 @@ func (s *Service) CreateInvite(ctx context.Context, request CreateRequest) (Invi
 	return InviteResult{
 		Device: device,
 		Invite: model.InviteFile{
-			Version:       1,
+			Version:       2,
 			Type:          "tnest-vpn-enrollment",
 			ManagementURL: s.cfg.ManagementURL,
 			Token:         token,
 			ExpiresAt:     enrollment.ExpiresAt,
 			DeviceName:    device.Name,
+			CatalogSigningKey: s.CatalogPublicKey(),
 			Purpose:       "enroll",
 		},
+	}, nil
+}
+
+func (s *Service) ClaimV2(ctx context.Context, request ClaimV2Request) (ClaimV2Result, error) {
+	if len(request.Credentials) == 0 || len(request.Credentials) > 32 {
+		return ClaimV2Result{}, errors.New("invalid region credentials")
+	}
+	seen := make(map[string]bool, len(request.Credentials))
+	var singapore RegionKeyRequest
+	for _, credential := range request.Credentials {
+		code := strings.ToUpper(strings.TrimSpace(credential.RegionCode))
+		if code == "" || seen[code] {
+			return ClaimV2Result{}, errors.New("invalid or duplicate region credential")
+		}
+		seen[code] = true
+		if code == "SG" {
+			singapore = credential
+		}
+	}
+	if singapore.RegionCode == "" {
+		return ClaimV2Result{}, errors.New("Singapore credential is required for initial enrollment")
+	}
+	device, err := s.Claim(ctx, ClaimRequest{
+		Token: request.Token, PublicKey: singapore.PublicKey,
+		PresharedKey: singapore.PresharedKey,
+	})
+	request.Token = ""
+	if err != nil {
+		return ClaimV2Result{}, err
+	}
+	_, sealed, _, err := s.store.Device(ctx, device.ID)
+	if err != nil {
+		return ClaimV2Result{}, err
+	}
+	if err := s.store.UpsertDeviceRegion(ctx, model.DeviceRegionCredential{
+		DeviceID: device.ID, RegionCode: "SG", IPv4: device.IPv4,
+		IPv6: device.IPv6, PublicKey: device.PublicKey,
+		Status: model.RegionStatusActive,
+	}, sealed, s.now().UTC()); err != nil {
+		return ClaimV2Result{}, err
+	}
+	deviceToken, _, err := token()
+	if err != nil {
+		return ClaimV2Result{}, err
+	}
+	if err := s.store.CreateDeviceToken(
+		ctx, device.ID, deviceToken, s.now().UTC(), s.now().UTC().Add(365*24*time.Hour),
+	); err != nil {
+		return ClaimV2Result{}, err
+	}
+	configurations := make([]model.RegionConfiguration, 0, len(request.Credentials))
+	configuration, err := s.RegionConfiguration(ctx, device.ID, "SG")
+	if err != nil {
+		return ClaimV2Result{}, err
+	}
+	configurations = append(configurations, configuration)
+	for _, credential := range request.Credentials {
+		if strings.EqualFold(credential.RegionCode, "SG") {
+			continue
+		}
+		if _, err := s.EnrollRegion(ctx, device, credential); err != nil {
+			return ClaimV2Result{}, err
+		}
+		value, err := s.RegionConfiguration(ctx, device.ID, credential.RegionCode)
+		if err != nil {
+			return ClaimV2Result{}, err
+		}
+		configurations = append(configurations, value)
+	}
+	catalogValue, err := s.Catalog(ctx)
+	if err != nil {
+		return ClaimV2Result{}, err
+	}
+	return ClaimV2Result{
+		Device: device, DeviceToken: deviceToken,
+		Catalog: catalogValue, Regions: configurations,
+	}, nil
+}
+
+func (s *Service) AuthenticateDevice(
+	ctx context.Context,
+	tokenValue string,
+) (model.Device, error) {
+	if len(tokenValue) < 32 {
+		return model.Device{}, store.ErrNotFound
+	}
+	device, err := s.store.DeviceForToken(ctx, tokenValue, s.now().UTC())
+	if err != nil {
+		return model.Device{}, err
+	}
+	if device.Status != model.StatusActive {
+		return model.Device{}, store.ErrNotFound
+	}
+	return device, nil
+}
+
+func (s *Service) EnrollRegion(
+	ctx context.Context,
+	device model.Device,
+	request RegionKeyRequest,
+) (model.DeviceRegionCredential, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	code := strings.ToUpper(strings.TrimSpace(request.RegionCode))
+	region, err := s.store.Region(ctx, code, true)
+	if err != nil {
+		return model.DeviceRegionCredential{}, err
+	}
+	if _, err := wgtypes.ParseKey(request.PublicKey); err != nil {
+		return model.DeviceRegionCredential{}, errors.New("invalid public key")
+	}
+	if _, err := wgtypes.ParseKey(request.PresharedKey); err != nil {
+		return model.DeviceRegionCredential{}, errors.New("invalid preshared key")
+	}
+	if existing, _, err := s.store.DeviceRegion(ctx, device.ID, code); err == nil {
+		if existing.PublicKey == request.PublicKey &&
+			existing.Status == model.RegionStatusActive {
+			return existing, nil
+		}
+		return model.DeviceRegionCredential{}, store.ErrConflict
+	} else if !errors.Is(err, store.ErrNotFound) {
+		return model.DeviceRegionCredential{}, err
+	}
+	slot, err := s.store.DeviceSlot(ctx, device.ID)
+	if err != nil {
+		return model.DeviceRegionCredential{}, err
+	}
+	ipv4, err := addressAt(region.IPv4Network, slot)
+	if err != nil {
+		return model.DeviceRegionCredential{}, err
+	}
+	ipv6, err := addressAt(region.IPv6Network, slot)
+	if err != nil {
+		return model.DeviceRegionCredential{}, err
+	}
+	sealed, err := s.sealer.Seal(
+		[]byte(request.PresharedKey), "device-region-psk:"+code,
+	)
+	if err != nil {
+		return model.DeviceRegionCredential{}, err
+	}
+	credential := model.DeviceRegionCredential{
+		DeviceID: device.ID, RegionCode: code, IPv4: ipv4, IPv6: ipv6,
+		PublicKey: request.PublicKey, Status: model.RegionStatusActive,
+	}
+	if err := s.store.UpsertDeviceRegion(ctx, credential, sealed, s.now().UTC()); err != nil {
+		return model.DeviceRegionCredential{}, err
+	}
+	return credential, nil
+}
+
+func (s *Service) RegionConfiguration(
+	ctx context.Context,
+	deviceID, regionCode string,
+) (model.RegionConfiguration, error) {
+	credential, _, err := s.store.DeviceRegion(ctx, deviceID, regionCode)
+	if err != nil {
+		return model.RegionConfiguration{}, err
+	}
+	region, err := s.store.Region(ctx, credential.RegionCode, true)
+	if err != nil {
+		return model.RegionConfiguration{}, err
+	}
+	nodes, err := s.store.Nodes(ctx, credential.RegionCode, false)
+	if err != nil {
+		return model.RegionConfiguration{}, err
+	}
+	catalogNodes := make([]model.CatalogNode, 0, len(nodes))
+	for _, node := range nodes {
+		if node.Endpoint == "" || node.ProbeURL == "" || node.ServerPublicKey == "" {
+			continue
+		}
+		catalogNodes = append(catalogNodes, model.CatalogNode{
+			ID: node.ID, Endpoint: node.Endpoint, ProbeURL: node.ProbeURL,
+			ServerPublicKey: node.ServerPublicKey, Priority: node.Priority,
+		})
+	}
+	if len(catalogNodes) == 0 {
+		return model.RegionConfiguration{}, errors.New("region has no ready node")
+	}
+	return model.RegionConfiguration{
+		RegionCode: credential.RegionCode,
+		Address: []string{credential.IPv4 + "/32", credential.IPv6 + "/128"},
+		DNS: append([]string(nil), region.DNS...), MTU: region.MTU,
+		AllowedIPs: []string{"0.0.0.0/0", "::/0"}, PersistentKeepalive: 25,
+		ConfigVersion: region.ConfigVersion, Nodes: catalogNodes,
+	}, nil
+}
+
+func (s *Service) DeviceRegions(
+	ctx context.Context,
+	deviceID string,
+) ([]model.RegionConfiguration, error) {
+	credentials, err := s.store.DeviceRegions(ctx, deviceID)
+	if err != nil {
+		return nil, err
+	}
+	result := make([]model.RegionConfiguration, 0, len(credentials))
+	for _, credential := range credentials {
+		if credential.Status != model.RegionStatusActive {
+			continue
+		}
+		value, err := s.RegionConfiguration(ctx, deviceID, credential.RegionCode)
+		if errors.Is(err, store.ErrNotFound) ||
+			(err != nil && strings.Contains(err.Error(), "no ready node")) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, value)
+	}
+	return result, nil
+}
+
+func (s *Service) ClientUsage(
+	ctx context.Context,
+	deviceID, rangeValue, regionCode string,
+) ([]model.UsagePoint, string, error) {
+	now := s.now().UTC()
+	var from time.Time
+	var bucket string
+	switch rangeValue {
+	case "", "24h":
+		from, bucket = now.Add(-24*time.Hour), "hour"
+	case "7d":
+		from, bucket = now.Add(-7*24*time.Hour), "day"
+	case "30d":
+		from, bucket = now.Add(-30*24*time.Hour), "day"
+	default:
+		return nil, "", errors.New("invalid usage range")
+	}
+	code := strings.ToUpper(strings.TrimSpace(regionCode))
+	if code == "" {
+		code = "SG"
+	}
+	if _, _, err := s.store.DeviceRegion(ctx, deviceID, code); err != nil {
+		return nil, "", err
+	}
+	// The legacy Singapore collector remains the authoritative source during
+	// migration. Regional collectors write the same contract as nodes go live.
+	if code != "SG" {
+		return []model.UsagePoint{}, bucket, nil
+	}
+	points, err := s.store.Usage(ctx, deviceID, bucket, from, now.Add(time.Hour))
+	if err != nil {
+		return nil, "", err
+	}
+	for index := range points {
+		points[index].RegionCode = "SG"
+		points[index].NodeID = "sg-sin-01"
+	}
+	return points, bucket, nil
+}
+
+func (s *Service) DesiredState(
+	ctx context.Context,
+	nodeID string,
+) (model.NodeDesiredState, error) {
+	nodes, err := s.store.Nodes(ctx, "", true)
+	if err != nil {
+		return model.NodeDesiredState{}, err
+	}
+	var node model.Node
+	for _, candidate := range nodes {
+		if candidate.ID == strings.ToLower(strings.TrimSpace(nodeID)) {
+			node = candidate
+			break
+		}
+	}
+	if node.ID == "" {
+		return model.NodeDesiredState{}, store.ErrNotFound
+	}
+	region, err := s.store.Region(ctx, node.RegionCode, false)
+	if err != nil {
+		return model.NodeDesiredState{}, err
+	}
+	credentials, err := s.store.DesiredCredentials(ctx, node.RegionCode)
+	if err != nil {
+		return model.NodeDesiredState{}, err
+	}
+	peers := make([]model.DesiredPeer, 0, len(credentials))
+	for _, item := range credentials {
+		contextName := "device-region-psk:" + node.RegionCode
+		if node.RegionCode == "SG" {
+			contextName = "device-psk"
+		}
+		plaintext, err := s.sealer.Open(item.SealedPSK, contextName)
+		if err != nil {
+			return model.NodeDesiredState{}, fmt.Errorf(
+				"decrypt region credential for %s: %w", item.Device.ID, err,
+			)
+		}
+		peers = append(peers, model.DesiredPeer{
+			DeviceID: item.Device.ID, DeviceName: item.Device.Name,
+			PublicKey: item.Credential.PublicKey, PresharedKey: string(plaintext),
+			IPv4: item.Credential.IPv4, IPv6: item.Credential.IPv6,
+		})
+		for i := range plaintext {
+			plaintext[i] = 0
+		}
+	}
+	port := 53147
+	if _, portValue, splitErr := net.SplitHostPort(node.Endpoint); splitErr == nil {
+		if parsed, parseErr := strconv.Atoi(portValue); parseErr == nil {
+			port = parsed
+		}
+	}
+	interfaceIPv4, err := interfaceAddress(region.IPv4Network)
+	if err != nil {
+		return model.NodeDesiredState{}, err
+	}
+	interfaceIPv6, err := interfaceAddress(region.IPv6Network)
+	if err != nil {
+		return model.NodeDesiredState{}, err
+	}
+	version := s.now().UTC().Unix()
+	return model.NodeDesiredState{
+		Version: version, NodeID: node.ID, RegionCode: node.RegionCode,
+		InterfaceIPv4: interfaceIPv4, InterfaceIPv6: interfaceIPv6,
+		ExitMode: region.ExitMode, ListenPort: port, Peers: peers,
 	}, nil
 }
 
@@ -211,6 +637,14 @@ func (s *Service) CreateStandard(ctx context.Context, request CreateRequest) (St
 		_ = s.wg.Apply(ctx, oldPeers)
 		return StandardResult{}, err
 	}
+	if err := s.store.UpsertDeviceRegion(ctx, model.DeviceRegionCredential{
+		DeviceID: device.ID, RegionCode: "SG", IPv4: device.IPv4,
+		IPv6: device.IPv6, PublicKey: device.PublicKey,
+		Status: model.RegionStatusActive,
+	}, sealed, now); err != nil {
+		_ = s.wg.Apply(ctx, oldPeers)
+		return StandardResult{}, err
+	}
 	return StandardResult{
 		Device: device,
 		Config: s.renderClient(device, privateKey.String(), psk.String()),
@@ -253,6 +687,15 @@ func (s *Service) Claim(ctx context.Context, request ClaimRequest) (model.Device
 		_ = s.wg.Apply(ctx, oldPeers)
 		return model.Device{}, err
 	}
+	if err := s.store.UpsertDeviceRegion(ctx, model.DeviceRegionCredential{
+		DeviceID: device.ID, RegionCode: "SG", IPv4: device.IPv4,
+		IPv6: device.IPv6, PublicKey: device.PublicKey,
+		Status: model.RegionStatusActive,
+	}, sealed, s.now().UTC()); err != nil {
+		_ = s.store.UndoClaim(ctx, device.ID)
+		_ = s.wg.Apply(ctx, oldPeers)
+		return model.Device{}, err
+	}
 	return device, nil
 }
 
@@ -284,6 +727,14 @@ func (s *Service) claimRotation(
 		return model.Device{}, err
 	}
 	if err := s.store.FinalizeRotation(ctx, tokenHash, request.PublicKey, sealed, now); err != nil {
+		_ = s.wg.Apply(ctx, oldPeers)
+		return model.Device{}, err
+	}
+	if err := s.store.UpsertDeviceRegion(ctx, model.DeviceRegionCredential{
+		DeviceID: rotated.ID, RegionCode: "SG", IPv4: rotated.IPv4,
+		IPv6: rotated.IPv6, PublicKey: rotated.PublicKey,
+		Status: model.RegionStatusActive,
+	}, sealed, now); err != nil {
 		_ = s.wg.Apply(ctx, oldPeers)
 		return model.Device{}, err
 	}
@@ -327,6 +778,12 @@ func (s *Service) Revoke(ctx context.Context, id string) error {
 	now := s.now().UTC()
 	if err := s.store.RevokeDevice(ctx, id, now, now.Add(s.cfg.Quarantine)); err != nil {
 		_ = s.wg.Apply(ctx, oldPeers)
+		return err
+	}
+	if err := s.store.RevokeDeviceRegions(ctx, id, now); err != nil {
+		return err
+	}
+	if err := s.store.RevokeDeviceTokens(ctx, id, now); err != nil {
 		return err
 	}
 	return nil
@@ -528,6 +985,33 @@ func slotFromIPv4(value string) (int, error) {
 		return 0, fmt.Errorf("invalid VPN IPv4 address %q", value)
 	}
 	return slot, nil
+}
+
+func addressAt(network string, slot int) (string, error) {
+	prefix, err := netip.ParsePrefix(strings.TrimSpace(network))
+	if err != nil || slot < 1 {
+		return "", fmt.Errorf("invalid region network %q", network)
+	}
+	address := prefix.Masked().Addr()
+	for index := 0; index < slot; index++ {
+		address = address.Next()
+		if !address.IsValid() || !prefix.Contains(address) {
+			return "", fmt.Errorf("region network %q does not contain slot %d", network, slot)
+		}
+	}
+	return address.String(), nil
+}
+
+func interfaceAddress(network string) (string, error) {
+	prefix, err := netip.ParsePrefix(strings.TrimSpace(network))
+	if err != nil {
+		return "", fmt.Errorf("invalid region network %q", network)
+	}
+	address := prefix.Masked().Addr().Next()
+	if !address.IsValid() || !prefix.Contains(address) {
+		return "", fmt.Errorf("region network %q has no server address", network)
+	}
+	return fmt.Sprintf("%s/%d", address, prefix.Bits()), nil
 }
 
 func token() (string, []byte, error) {

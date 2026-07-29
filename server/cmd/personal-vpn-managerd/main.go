@@ -15,6 +15,7 @@ import (
 	"golang.zx2c4.com/wireguard/wgctrl"
 
 	"github.com/jeni0101/vpn/server/internal/config"
+	"github.com/jeni0101/vpn/server/internal/catalog"
 	"github.com/jeni0101/vpn/server/internal/manager"
 	"github.com/jeni0101/vpn/server/internal/security"
 	"github.com/jeni0101/vpn/server/internal/store"
@@ -52,6 +53,14 @@ func main() {
 		ApplyLive: cfg.ApplyChanges, BackupRecipient: cfg.BackupRecipient,
 	}
 	service := manager.NewService(cfg, db, sealer, wg)
+	catalogSigner, err := catalog.LoadOrCreateSigner(cfg.CatalogSigningKeyPath)
+	if err != nil {
+		logger.Fatal(err)
+	}
+	service.SetCatalogSigner(catalogSigner)
+	if err := service.EnsureLocalNode(context.Background()); err != nil {
+		logger.Fatal(err)
+	}
 
 	if err := os.MkdirAll(filepath.Dir(cfg.SocketPath), 0750); err != nil {
 		logger.Fatal(err)

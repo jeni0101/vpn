@@ -1,6 +1,7 @@
 package webapp
 
 import (
+	"crypto/subtle"
 	"embed"
 	"encoding/json"
 	"fmt"
@@ -37,6 +38,7 @@ type Server struct {
 	secure       bool
 	assets       fs.FS
 	releasesPath string
+	nodeAPIToken []byte
 }
 
 func New(
@@ -46,6 +48,7 @@ func New(
 	secureCookies bool,
 	publicDir string,
 	releasesPath string,
+	nodeAPIToken string,
 ) (*Server, error) {
 	var assets fs.FS
 	var err error
@@ -61,6 +64,7 @@ func New(
 		auth: authStore, manager: managerClient, downloads: newDownloadCache(),
 		limiter: auth.NewRateLimiter(), logger: logger, secure: secureCookies,
 		assets: assets, releasesPath: releasesPath,
+		nodeAPIToken: []byte(nodeAPIToken),
 	}, nil
 }
 
@@ -72,6 +76,12 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("POST /api/v1/auth/logout", s.requireAuth(http.HandlerFunc(s.logout), true))
 	mux.Handle("GET /api/v1/auth/session", s.requireAuth(http.HandlerFunc(s.session), false))
 	mux.HandleFunc("POST /api/v1/enrollments/claim", s.claim)
+	mux.HandleFunc("POST /api/v2/enrollments/claim", s.claimV2)
+	mux.HandleFunc("GET /api/v2/client/regions", s.clientRegions)
+	mux.HandleFunc("POST /api/v2/client/regions/{regionCode}/enroll", s.enrollRegion)
+	mux.HandleFunc("GET /api/v2/client/usage", s.clientUsage)
+	mux.HandleFunc("GET /api/v2/node/desired-state", s.nodeDesiredState)
+	mux.HandleFunc("POST /api/v2/node/report", s.nodeReport)
 	mux.Handle("GET /api/v1/devices", s.requireAuth(http.HandlerFunc(s.devices), false))
 	mux.Handle("POST /api/v1/devices", s.requireAuth(http.HandlerFunc(s.createDevice), true))
 	mux.Handle("POST /api/v1/devices/{id}/revoke", s.requireAuth(http.HandlerFunc(s.revoke), true))
@@ -81,8 +91,271 @@ func (s *Server) Handler() http.Handler {
 	mux.Handle("GET /api/v1/events", s.requireAuth(http.HandlerFunc(s.events), false))
 	mux.Handle("GET /api/v1/downloads/{token}", s.requireAuth(http.HandlerFunc(s.download), false))
 	mux.HandleFunc("GET /api/v1/releases", s.releases)
+	mux.HandleFunc("GET /latency", s.latency)
+	mux.HandleFunc("GET /api/v2/client/catalog", s.clientCatalog)
+	mux.Handle("GET /api/v2/admin/regions",
+		s.requireAuth(http.HandlerFunc(s.adminRegions), false))
+	mux.Handle("POST /api/v2/admin/regions",
+		s.requireAuth(http.HandlerFunc(s.adminRegions), true))
+	mux.Handle("PATCH /api/v2/admin/regions/{code}",
+		s.requireAuth(http.HandlerFunc(s.adminRegion), true))
+	mux.Handle("GET /api/v2/admin/nodes",
+		s.requireAuth(http.HandlerFunc(s.adminNodes), false))
+	mux.Handle("POST /api/v2/admin/nodes",
+		s.requireAuth(http.HandlerFunc(s.adminNodes), true))
+	mux.Handle("PATCH /api/v2/admin/nodes/{id}",
+		s.requireAuth(http.HandlerFunc(s.adminNode), true))
 	mux.HandleFunc("/", s.static)
 	return s.securityHeaders(http.MaxBytesHandler(mux, 256*1024))
+}
+
+func (s *Server) latency(w http.ResponseWriter, _ *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Content-Length", "0")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) clientCatalog(w http.ResponseWriter, r *http.Request) {
+	value, err := s.manager.Catalog(r.Context())
+	if err != nil {
+		s.managerError(w, err)
+		return
+	}
+	jsonResponse(w, http.StatusOK, value)
+}
+
+func (s *Server) claimV2(w http.ResponseWriter, r *http.Request) {
+	var request manager.ClaimV2Request
+	if !readJSON(w, r, &request) {
+		return
+	}
+	result, err := s.manager.ClaimV2(r.Context(), request)
+	request.Token = ""
+	for index := range request.Credentials {
+		request.Credentials[index].PresharedKey = ""
+	}
+	if err != nil {
+		s.managerError(w, err)
+		return
+	}
+	s.auditEvent(r, "enrollment", "device.enrolled_v2", result.Device.ID, "")
+	jsonResponse(w, http.StatusOK, result)
+}
+
+func (s *Server) clientRegions(w http.ResponseWriter, r *http.Request) {
+	tokenValue, ok := clientBearer(w, r)
+	if !ok {
+		return
+	}
+	values, err := s.manager.ClientRegions(r.Context(), tokenValue)
+	if err != nil {
+		s.clientManagerError(w, err)
+		return
+	}
+	jsonResponse(w, http.StatusOK, map[string]any{"regions": values})
+}
+
+func (s *Server) enrollRegion(w http.ResponseWriter, r *http.Request) {
+	tokenValue, ok := clientBearer(w, r)
+	if !ok {
+		return
+	}
+	var request manager.RegionKeyRequest
+	if !readJSON(w, r, &request) {
+		return
+	}
+	request.RegionCode = strings.ToUpper(strings.TrimSpace(r.PathValue("regionCode")))
+	value, err := s.manager.EnrollRegion(
+		r.Context(), tokenValue, request.RegionCode, request,
+	)
+	request.PresharedKey = ""
+	if err != nil {
+		s.clientManagerError(w, err)
+		return
+	}
+	jsonResponse(w, http.StatusCreated, value)
+}
+
+func (s *Server) clientUsage(w http.ResponseWriter, r *http.Request) {
+	tokenValue, ok := clientBearer(w, r)
+	if !ok {
+		return
+	}
+	points, bucket, syncedAt, err := s.manager.ClientUsage(
+		r.Context(), tokenValue, r.URL.Query().Get("range"),
+		r.URL.Query().Get("region"),
+	)
+	if err != nil {
+		s.clientManagerError(w, err)
+		return
+	}
+	jsonResponse(w, http.StatusOK, map[string]any{
+		"points": points, "bucket": bucket, "synced_at": syncedAt,
+	})
+}
+
+func (s *Server) nodeDesiredState(w http.ResponseWriter, r *http.Request) {
+	nodeID, ok := s.authorizeNode(w, r)
+	if !ok {
+		return
+	}
+	value, err := s.manager.NodeDesiredState(r.Context(), nodeID)
+	if err != nil {
+		s.managerError(w, err)
+		return
+	}
+	jsonResponse(w, http.StatusOK, value)
+}
+
+func (s *Server) nodeReport(w http.ResponseWriter, r *http.Request) {
+	nodeID, ok := s.authorizeNode(w, r)
+	if !ok {
+		return
+	}
+	var report model.NodeReport
+	if !readJSON(w, r, &report) {
+		return
+	}
+	if report.NodeID != "" && !strings.EqualFold(report.NodeID, nodeID) {
+		jsonResponse(w, http.StatusBadRequest, map[string]string{
+			"error": "node identity mismatch",
+		})
+		return
+	}
+	report.NodeID = nodeID
+	if err := s.manager.SaveNodeReport(r.Context(), report); err != nil {
+		s.managerError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func clientBearer(w http.ResponseWriter, r *http.Request) (string, bool) {
+	const prefix = "Bearer "
+	value := r.Header.Get("Authorization")
+	if len(value) <= len(prefix) || !strings.EqualFold(value[:len(prefix)], prefix) {
+		jsonResponse(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+		return "", false
+	}
+	tokenValue := strings.TrimSpace(value[len(prefix):])
+	if len(tokenValue) < 32 || len(tokenValue) > 256 {
+		jsonResponse(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+		return "", false
+	}
+	return tokenValue, true
+}
+
+func (s *Server) authorizeNode(w http.ResponseWriter, r *http.Request) (string, bool) {
+	nodeID := strings.ToLower(strings.TrimSpace(r.Header.Get("X-TNest-Node-ID")))
+	verify := r.Header.Get("X-TNest-Client-Verify")
+	distinguishedName := r.Header.Get("X-TNest-Client-DN")
+	tokenValue, tokenOK := clientBearer(w, r)
+	if !tokenOK {
+		return "", false
+	}
+	validToken := len(s.nodeAPIToken) >= 32 &&
+		len(tokenValue) == len(s.nodeAPIToken) &&
+		subtle.ConstantTimeCompare([]byte(tokenValue), s.nodeAPIToken) == 1
+	validCertificate := verify == "SUCCESS" && nodeID != "" &&
+		strings.Contains(distinguishedName, "CN="+nodeID)
+	if !validToken || !validCertificate {
+		jsonResponse(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+		return "", false
+	}
+	return nodeID, true
+}
+
+func (s *Server) clientManagerError(w http.ResponseWriter, err error) {
+	if strings.Contains(strings.ToLower(err.Error()), "unauthorized") {
+		jsonResponse(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
+		return
+	}
+	s.managerError(w, err)
+}
+
+func (s *Server) adminRegions(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodGet {
+		values, err := s.manager.Regions(r.Context(), true)
+		if err != nil {
+			s.managerError(w, err)
+			return
+		}
+		jsonResponse(w, http.StatusOK, map[string]any{"regions": values})
+		return
+	}
+	if !s.requireSensitiveTOTP(w, r) {
+		return
+	}
+	var value model.Region
+	if !readJSON(w, r, &value) {
+		return
+	}
+	if err := s.manager.UpsertRegion(r.Context(), value); err != nil {
+		s.managerError(w, err)
+		return
+	}
+	s.auditEvent(r, sessionFrom(r).Username, "region.updated", "", value.Code)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) adminRegion(w http.ResponseWriter, r *http.Request) {
+	if !s.requireSensitiveTOTP(w, r) {
+		return
+	}
+	var value model.Region
+	if !readJSON(w, r, &value) {
+		return
+	}
+	value.Code = r.PathValue("code")
+	if err := s.manager.UpsertRegion(r.Context(), value); err != nil {
+		s.managerError(w, err)
+		return
+	}
+	s.auditEvent(r, sessionFrom(r).Username, "region.updated", "", value.Code)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) adminNodes(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodGet {
+		values, err := s.manager.Nodes(r.Context(), r.URL.Query().Get("region"), true)
+		if err != nil {
+			s.managerError(w, err)
+			return
+		}
+		jsonResponse(w, http.StatusOK, map[string]any{"nodes": values})
+		return
+	}
+	if !s.requireSensitiveTOTP(w, r) {
+		return
+	}
+	var value model.Node
+	if !readJSON(w, r, &value) {
+		return
+	}
+	if err := s.manager.UpsertNode(r.Context(), value); err != nil {
+		s.managerError(w, err)
+		return
+	}
+	s.auditEvent(r, sessionFrom(r).Username, "node.updated", "", value.ID)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) adminNode(w http.ResponseWriter, r *http.Request) {
+	if !s.requireSensitiveTOTP(w, r) {
+		return
+	}
+	var value model.Node
+	if !readJSON(w, r, &value) {
+		return
+	}
+	value.ID = r.PathValue("id")
+	if err := s.manager.UpsertNode(r.Context(), value); err != nil {
+		s.managerError(w, err)
+		return
+	}
+	s.auditEvent(r, sessionFrom(r).Username, "node.updated", "", value.ID)
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (s *Server) health(w http.ResponseWriter, r *http.Request) {

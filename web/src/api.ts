@@ -1,4 +1,4 @@
-import type { AuditEvent, Device, UsagePoint } from "./types";
+import type { AuditEvent, Device, Region, UsagePoint, VPNNode } from "./types";
 import { usageWindow, type UsageQuery } from "./usage";
 
 let csrfToken = sessionStorage.getItem("tnest_csrf") ?? "";
@@ -93,5 +93,16 @@ export const api = {
   async audit() {
     const payload = await request<{ events?: AuditEvent[] | null }>("/api/v1/audit?limit=100");
     return Array.isArray(payload.events) ? payload.events : [];
+  },
+  async regions() {
+    const payload = await request<{ regions?: Region[] | null }>("/api/v2/admin/regions");
+    return Array.isArray(payload.regions) ? payload.regions : [];
+  },
+  async nodes(region = "") {
+    const query = region ? `?region=${encodeURIComponent(region)}` : "";
+    const payload = await request<{ nodes?: VPNNode[] | null }>(
+      `/api/v2/admin/nodes${query}`,
+    );
+    return Array.isArray(payload.nodes) ? payload.nodes : [];
   },
 };

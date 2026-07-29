@@ -104,7 +104,148 @@ func (c *Client) Import(ctx context.Context, request manager.ImportRequest) erro
 	return c.do(ctx, http.MethodPost, "/v1/import", request, nil)
 }
 
+func (c *Client) Catalog(ctx context.Context) (model.Catalog, error) {
+	var response model.Catalog
+	err := c.do(ctx, http.MethodGet, "/v2/catalog", nil, &response)
+	return response, err
+}
+
+func (c *Client) CatalogPublicKey(ctx context.Context) (string, error) {
+	var response struct {
+		PublicKey string `json:"public_key"`
+	}
+	err := c.do(ctx, http.MethodGet, "/v2/catalog-key", nil, &response)
+	return response.PublicKey, err
+}
+
+func (c *Client) Regions(ctx context.Context, includeDisabled bool) ([]model.Region, error) {
+	path := "/v2/regions"
+	if includeDisabled {
+		path += "?all=1"
+	}
+	var response struct {
+		Regions []model.Region `json:"regions"`
+	}
+	err := c.do(ctx, http.MethodGet, path, nil, &response)
+	return response.Regions, err
+}
+
+func (c *Client) UpsertRegion(ctx context.Context, value model.Region) error {
+	return c.do(ctx, http.MethodPut,
+		"/v2/regions/"+url.PathEscape(value.Code), value, nil)
+}
+
+func (c *Client) Nodes(
+	ctx context.Context,
+	regionCode string,
+	includeDisabled bool,
+) ([]model.Node, error) {
+	query := url.Values{}
+	if regionCode != "" {
+		query.Set("region", regionCode)
+	}
+	if includeDisabled {
+		query.Set("all", "1")
+	}
+	path := "/v2/nodes"
+	if encoded := query.Encode(); encoded != "" {
+		path += "?" + encoded
+	}
+	var response struct {
+		Nodes []model.Node `json:"nodes"`
+	}
+	err := c.do(ctx, http.MethodGet, path, nil, &response)
+	return response.Nodes, err
+}
+
+func (c *Client) UpsertNode(ctx context.Context, value model.Node) error {
+	return c.do(ctx, http.MethodPut,
+		"/v2/nodes/"+url.PathEscape(value.ID), value, nil)
+}
+
+func (c *Client) SaveNodeReport(ctx context.Context, value model.NodeReport) error {
+	return c.do(ctx, http.MethodPost, "/v2/node/report", value, nil)
+}
+
+func (c *Client) ClaimV2(
+	ctx context.Context,
+	request manager.ClaimV2Request,
+) (manager.ClaimV2Result, error) {
+	var response manager.ClaimV2Result
+	err := c.do(ctx, http.MethodPost, "/v2/enrollments/claim", request, &response)
+	return response, err
+}
+
+func (c *Client) ClientRegions(
+	ctx context.Context,
+	deviceToken string,
+) ([]model.RegionConfiguration, error) {
+	var response struct {
+		Regions []model.RegionConfiguration `json:"regions"`
+	}
+	err := c.doAuthenticated(
+		ctx, http.MethodGet, "/v2/client/regions", deviceToken, nil, &response,
+	)
+	return response.Regions, err
+}
+
+func (c *Client) EnrollRegion(
+	ctx context.Context,
+	deviceToken, regionCode string,
+	request manager.RegionKeyRequest,
+) (manager.EnrollRegionResult, error) {
+	var response manager.EnrollRegionResult
+	err := c.doAuthenticated(
+		ctx, http.MethodPost,
+		"/v2/client/regions/"+url.PathEscape(regionCode)+"/enroll",
+		deviceToken, request, &response,
+	)
+	return response, err
+}
+
+func (c *Client) ClientUsage(
+	ctx context.Context,
+	deviceToken, rangeValue, regionCode string,
+) ([]model.UsagePoint, string, time.Time, error) {
+	query := url.Values{}
+	query.Set("range", rangeValue)
+	if regionCode != "" {
+		query.Set("region", regionCode)
+	}
+	var response struct {
+		Points   []model.UsagePoint `json:"points"`
+		Bucket   string             `json:"bucket"`
+		SyncedAt time.Time          `json:"synced_at"`
+	}
+	err := c.doAuthenticated(
+		ctx, http.MethodGet, "/v2/client/usage?"+query.Encode(),
+		deviceToken, nil, &response,
+	)
+	return response.Points, response.Bucket, response.SyncedAt, err
+}
+
+func (c *Client) NodeDesiredState(
+	ctx context.Context,
+	nodeID string,
+) (model.NodeDesiredState, error) {
+	var response model.NodeDesiredState
+	err := c.do(
+		ctx, http.MethodGet,
+		"/v2/node/desired-state?node_id="+url.QueryEscape(nodeID),
+		nil, &response,
+	)
+	return response, err
+}
+
 func (c *Client) do(ctx context.Context, method, path string, request, response any) error {
+	return c.doAuthenticated(ctx, method, path, "", request, response)
+}
+
+func (c *Client) doAuthenticated(
+	ctx context.Context,
+	method, path, token string,
+	request, response any,
+) error {
 	var body io.Reader
 	if request != nil {
 		data, err := json.Marshal(request)
@@ -119,6 +260,9 @@ func (c *Client) do(ctx context.Context, method, path string, request, response 
 	}
 	if body != nil {
 		httpRequest.Header.Set("Content-Type", "application/json")
+	}
+	if token != "" {
+		httpRequest.Header.Set("Authorization", "Bearer "+token)
 	}
 	httpResponse, err := c.http.Do(httpRequest)
 	if err != nil {

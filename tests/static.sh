@@ -35,6 +35,14 @@ if rg -n \
 fi
 printf 'WireGuard secret scan: ok\n'
 
+if rg -n -i \
+    '(@cloudflare/speedtest|speedtest|iperf|downloadTest|uploadTest|[0-9][[:space:]]*Mbps)' \
+    web/src clients server config web/package.json web/package-lock.json; then
+    printf 'Forbidden bandwidth-test implementation found\n' >&2
+    exit 1
+fi
+printf 'bandwidth-test feature scan: ok\n'
+
 for token in \
     '@@VPN_SERVER_IPV4@@' \
     '@@VPN_SERVER_IPV6@@' \

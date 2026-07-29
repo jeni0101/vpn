@@ -20,6 +20,11 @@ type Manager struct {
 	Endpoint        string
 	ServerPublicKey string
 	BackupRecipient string
+	CatalogSigningKeyPath string
+	RegionCode      string
+	NodeID          string
+	NodeProbeURL    string
+	ExitMode        string
 	ApplyChanges    bool
 	PollInterval    time.Duration
 	Quarantine      time.Duration
@@ -33,6 +38,7 @@ type Web struct {
 	AuthKeyPath   string
 	PublicDir     string
 	ReleasesPath  string
+	NodeAPIToken  string
 	SecureCookies bool
 }
 
@@ -47,10 +53,21 @@ func ManagerFromEnv() (Manager, error) {
 		Endpoint:        env("TNEST_WG_ENDPOINT", "203.0.113.10:51999"),
 		ServerPublicKey: os.Getenv("TNEST_SERVER_PUBLIC_KEY"),
 		BackupRecipient: os.Getenv("TNEST_AGE_RECIPIENT"),
+		CatalogSigningKeyPath: env(
+			"TNEST_CATALOG_SIGNING_KEY",
+			"/etc/personal-vpn/catalog-signing.key",
+		),
+		RegionCode: env("TNEST_REGION_CODE", "SG"),
+		NodeID: env("TNEST_NODE_ID", "sg-sin-01"),
+		NodeProbeURL: os.Getenv("TNEST_NODE_PROBE_URL"),
+		ExitMode: env("TNEST_EXIT_MODE", "dual_stack"),
 		ApplyChanges:    envBool("TNEST_APPLY_CHANGES", false),
 		PollInterval:    30 * time.Second,
 		Quarantine:      7 * 24 * time.Hour,
 		InviteTTL:       10 * time.Minute,
+	}
+	if cfg.NodeProbeURL == "" {
+		cfg.NodeProbeURL = cfg.ManagementURL + "/latency"
 	}
 	if value := os.Getenv("TNEST_POLL_INTERVAL"); value != "" {
 		d, err := time.ParseDuration(value)
@@ -73,6 +90,7 @@ func WebFromEnv() (Web, error) {
 		AuthKeyPath:   env("TNEST_AUTH_KEY", "/etc/personal-vpn-web/auth.key"),
 		PublicDir:     os.Getenv("TNEST_WEB_PUBLIC"),
 		ReleasesPath:  env("TNEST_RELEASES_FILE", "/var/lib/personal-vpn-web/releases.json"),
+		NodeAPIToken:  os.Getenv("TNEST_NODE_API_TOKEN"),
 		SecureCookies: envBool("TNEST_SECURE_COOKIES", true),
 	}
 	if cfg.ListenAddress == "" || cfg.ManagerSocket == "" {
@@ -92,10 +110,19 @@ func validateManager(cfg Manager) error {
 	if cfg.Endpoint == "" {
 		return errors.New("WireGuard endpoint is required")
 	}
-	for _, path := range []string{cfg.SocketPath, cfg.DatabasePath, cfg.MasterKeyPath, cfg.WGConfigPath} {
+	for _, path := range []string{
+		cfg.SocketPath, cfg.DatabasePath, cfg.MasterKeyPath, cfg.WGConfigPath,
+		cfg.CatalogSigningKeyPath,
+	} {
 		if !filepath.IsAbs(path) {
 			return fmt.Errorf("path must be absolute: %s", path)
 		}
+	}
+	if cfg.RegionCode == "" || cfg.NodeID == "" || cfg.NodeProbeURL == "" {
+		return errors.New("region code, node id, and probe URL are required")
+	}
+	if cfg.ExitMode != "dual_stack" && cfg.ExitMode != "ipv4_exit_ipv6_blocked" {
+		return errors.New("unsupported exit mode")
 	}
 	if cfg.PollInterval < time.Second {
 		return errors.New("poll interval must be at least one second")

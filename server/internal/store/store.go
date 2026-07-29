@@ -124,6 +124,108 @@ func (s *Store) migrate(ctx context.Context) error {
 			remote_ip TEXT,
 			detail TEXT NOT NULL DEFAULT ''
 		)`,
+		`CREATE TABLE IF NOT EXISTS regions (
+			code TEXT PRIMARY KEY,
+			display_name TEXT NOT NULL,
+			sort_order INTEGER NOT NULL DEFAULT 0,
+			exit_mode TEXT NOT NULL,
+			ipv4_network TEXT NOT NULL,
+			ipv6_network TEXT NOT NULL,
+			dns_json TEXT NOT NULL DEFAULT '[]',
+			mtu INTEGER NOT NULL DEFAULT 1420,
+			enabled INTEGER NOT NULL DEFAULT 0,
+			config_version INTEGER NOT NULL DEFAULT 1,
+			updated_at TEXT NOT NULL
+		)`,
+		`CREATE TABLE IF NOT EXISTS nodes (
+			id TEXT PRIMARY KEY,
+			region_code TEXT NOT NULL REFERENCES regions(code) ON DELETE RESTRICT,
+			endpoint TEXT NOT NULL,
+			probe_url TEXT NOT NULL,
+			server_public_key TEXT NOT NULL DEFAULT '',
+			priority INTEGER NOT NULL DEFAULT 100,
+			enabled INTEGER NOT NULL DEFAULT 0,
+			health TEXT NOT NULL DEFAULT 'unknown',
+			version TEXT NOT NULL DEFAULT '',
+			last_report_at TEXT,
+			updated_at TEXT NOT NULL
+		)`,
+		`CREATE INDEX IF NOT EXISTS nodes_region_priority
+		 ON nodes(region_code, enabled, priority, id)`,
+		`CREATE TABLE IF NOT EXISTS device_region_credentials (
+			device_id TEXT NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+			region_code TEXT NOT NULL REFERENCES regions(code) ON DELETE RESTRICT,
+			ipv4 TEXT NOT NULL,
+			ipv6 TEXT NOT NULL,
+			public_key TEXT NOT NULL,
+			psk_sealed BLOB,
+			status TEXT NOT NULL,
+			created_at TEXT NOT NULL,
+			updated_at TEXT NOT NULL,
+			PRIMARY KEY(device_id, region_code)
+		)`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS device_region_ipv4_active
+		 ON device_region_credentials(region_code, ipv4)
+		 WHERE status != 'revoked'`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS device_region_ipv6_active
+		 ON device_region_credentials(region_code, ipv6)
+		 WHERE status != 'revoked'`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS device_region_public_key_active
+		 ON device_region_credentials(region_code, public_key)
+		 WHERE public_key != '' AND status != 'revoked'`,
+		`CREATE TABLE IF NOT EXISTS device_tokens (
+			token_hash BLOB PRIMARY KEY,
+			device_id TEXT NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+			created_at TEXT NOT NULL,
+			expires_at TEXT NOT NULL,
+			revoked_at TEXT
+		)`,
+		`CREATE TABLE IF NOT EXISTS node_reports (
+			node_id TEXT PRIMARY KEY REFERENCES nodes(id) ON DELETE CASCADE,
+			version TEXT NOT NULL,
+			healthy INTEGER NOT NULL,
+			peer_count INTEGER NOT NULL,
+			last_error TEXT NOT NULL DEFAULT '',
+			usage_sequence INTEGER NOT NULL DEFAULT 0,
+			reported_at TEXT NOT NULL
+		)`,
+		`INSERT OR IGNORE INTO regions(
+			code,display_name,sort_order,exit_mode,ipv4_network,ipv6_network,
+			dns_json,mtu,enabled,config_version,updated_at
+		 ) VALUES(
+			'SG','Singapore',10,'dual_stack','10.66.0.0/24','fd66:66:66::/64',
+			'["1.1.1.1","2606:4700:4700::1111"]',1420,1,1,
+			strftime('%Y-%m-%dT%H:%M:%fZ','now')
+		 )`,
+		`INSERT OR IGNORE INTO regions(
+			code,display_name,sort_order,exit_mode,ipv4_network,ipv6_network,
+			dns_json,mtu,enabled,config_version,updated_at
+		 ) VALUES(
+			'MY','Malaysia (Kuala Lumpur)',20,'ipv4_exit_ipv6_blocked',
+			'10.67.0.0/24','fd67:67:67::/64','["1.1.1.1","1.0.0.1"]',1420,0,1,
+			strftime('%Y-%m-%dT%H:%M:%fZ','now')
+		 )`,
+		`INSERT OR IGNORE INTO nodes(
+			id,region_code,endpoint,probe_url,server_public_key,priority,enabled,
+			health,version,updated_at
+		 ) VALUES(
+			'sg-sin-01','SG','','https://vpn.tnestai.asia/latency','',10,1,
+			'unknown','',strftime('%Y-%m-%dT%H:%M:%fZ','now')
+		 )`,
+		`INSERT OR IGNORE INTO nodes(
+			id,region_code,endpoint,probe_url,server_public_key,priority,enabled,
+			health,version,updated_at
+		 ) VALUES(
+			'my-kul-01','MY','47.250.164.136:53147',
+			'https://my-kul-01.vpn.tnestai.asia/latency','',10,0,
+			'unknown','',strftime('%Y-%m-%dT%H:%M:%fZ','now')
+		 )`,
+		`INSERT OR IGNORE INTO device_region_credentials(
+			device_id,region_code,ipv4,ipv6,public_key,psk_sealed,status,created_at,updated_at
+		 )
+		 SELECT id,'SG',ipv4,ipv6,public_key,psk_sealed,status,created_at,
+		        strftime('%Y-%m-%dT%H:%M:%fZ','now')
+		 FROM devices`,
 	}
 	for _, statement := range statements {
 		if _, err := s.db.ExecContext(ctx, statement); err != nil {
