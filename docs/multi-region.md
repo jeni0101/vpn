@@ -46,3 +46,16 @@ The node agent keeps ten local `wg showconf` rollback points, applies peer
 changes with `wg syncconf`, and restores the last snapshot if an apply fails.
 Never paste the API token, client certificate private key, WireGuard private
 key, client private keys or PSKs into chat or logs.
+
+After the smoke test succeeds, enable node writes before publishing the region:
+
+```bash
+sudo scripts/remote/set-node-apply-mode.sh true
+sudo scripts/remote/set-region-enabled.sh MY my-kul-01 true
+```
+
+The first command backs up the node environment and restarts only the node
+agent. The second command verifies a recent healthy node report, backs up the
+central SQLite database, enables the node before the region, writes an audit
+event, and rolls both records back if the update fails. Disable in the reverse
+safe order with the same commands and `false`.
