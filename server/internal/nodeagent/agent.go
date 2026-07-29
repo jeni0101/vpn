@@ -23,24 +23,24 @@ import (
 )
 
 type Config struct {
-	ControlURL    string
-	NodeID        string
-	TokenPath     string
+	ControlURL     string
+	NodeID         string
+	TokenPath      string
 	ClientCertPath string
-	ClientKeyPath string
+	ClientKeyPath  string
 	PrivateKeyPath string
-	Interface     string
-	RuntimeDir    string
-	BackupDir     string
-	Interval      time.Duration
-	ApplyChanges  bool
+	Interface      string
+	RuntimeDir     string
+	BackupDir      string
+	Interval       time.Duration
+	ApplyChanges   bool
 }
 
 type Agent struct {
-	cfg    Config
-	client *http.Client
-	logger *log.Logger
-	token  string
+	cfg         Config
+	client      *http.Client
+	logger      *log.Logger
+	token       string
 	lastVersion int64
 }
 
@@ -67,7 +67,7 @@ func New(cfg Config, logger *log.Logger) (*Agent, error) {
 	}
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.TLSClientConfig = &tls.Config{
-		MinVersion: tls.VersionTLS12,
+		MinVersion:   tls.VersionTLS12,
 		Certificates: []tls.Certificate{certificate},
 	}
 	return &Agent{

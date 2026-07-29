@@ -402,9 +402,9 @@ func (s *Server) adminAppleBundle(w http.ResponseWriter, r *http.Request) {
 		result.Device.ID, "",
 	)
 	jsonResponse(w, http.StatusCreated, map[string]any{
-		"device": result.Device,
+		"device":       result.Device,
 		"download_url": "/api/v1/downloads/" + tokenValue,
-		"expires_at": expires,
+		"expires_at":   expires,
 	})
 }
 
@@ -600,9 +600,9 @@ func (s *Server) createDevice(w http.ResponseWriter, r *http.Request) {
 		}
 		s.auditEvent(r, actor, "device.apple_bundle_created", result.Device.ID, "")
 		jsonResponse(w, http.StatusCreated, map[string]any{
-			"device": result.Device,
+			"device":       result.Device,
 			"download_url": "/api/v1/downloads/" + tokenValue,
-			"expires_at": expires,
+			"expires_at":   expires,
 		})
 	default:
 		jsonResponse(w, http.StatusBadRequest, map[string]string{"error": "配置方式无效"})

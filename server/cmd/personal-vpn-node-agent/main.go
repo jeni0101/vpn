@@ -20,16 +20,16 @@ func main() {
 	}
 	apply, _ := strconv.ParseBool(env("TNEST_NODE_APPLY_CHANGES", "false"))
 	agent, err := nodeagent.New(nodeagent.Config{
-		ControlURL: env("TNEST_CONTROL_URL", "https://vpn.tnestai.asia"),
-		NodeID: env("TNEST_NODE_ID", ""),
-		TokenPath: env("TNEST_NODE_API_TOKEN_FILE", "/etc/personal-vpn-node/api.token"),
+		ControlURL:     env("TNEST_CONTROL_URL", "https://vpn.tnestai.asia"),
+		NodeID:         env("TNEST_NODE_ID", ""),
+		TokenPath:      env("TNEST_NODE_API_TOKEN_FILE", "/etc/personal-vpn-node/api.token"),
 		ClientCertPath: env("TNEST_NODE_CLIENT_CERT", "/etc/personal-vpn-node/client.crt"),
-		ClientKeyPath: env("TNEST_NODE_CLIENT_KEY", "/etc/personal-vpn-node/client.key"),
+		ClientKeyPath:  env("TNEST_NODE_CLIENT_KEY", "/etc/personal-vpn-node/client.key"),
 		PrivateKeyPath: env("TNEST_WG_PRIVATE_KEY", "/etc/wireguard/wg0.key"),
-		Interface: env("TNEST_WG_INTERFACE", "wg0"),
-		RuntimeDir: env("TNEST_NODE_RUNTIME_DIR", "/run/personal-vpn-node"),
-		BackupDir: env("TNEST_NODE_BACKUP_DIR", "/var/lib/personal-vpn-node/backups"),
-		Interval: interval, ApplyChanges: apply,
+		Interface:      env("TNEST_WG_INTERFACE", "wg0"),
+		RuntimeDir:     env("TNEST_NODE_RUNTIME_DIR", "/run/personal-vpn-node"),
+		BackupDir:      env("TNEST_NODE_BACKUP_DIR", "/var/lib/personal-vpn-node/backups"),
+		Interval:       interval, ApplyChanges: apply,
 	}, logger)
 	if err != nil {
 		logger.Fatal(err)

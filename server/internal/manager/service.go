@@ -671,12 +671,12 @@ func (s *Service) CreateStandard(ctx context.Context, request CreateRequest) (St
 }
 
 type appleRegionMaterial struct {
-	region     model.Region
-	node       model.Node
-	credential model.DeviceRegionCredential
-	privateKey string
-	presharedKey string
-	sealedPSK []byte
+	region        model.Region
+	node          model.Node
+	credential    model.DeviceRegionCredential
+	privateKey    string
+	presharedKey  string
+	sealedPSK     []byte
 	sealedPrivate []byte
 }
 

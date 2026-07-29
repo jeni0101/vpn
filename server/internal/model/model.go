@@ -114,12 +114,12 @@ type NodeDesiredState struct {
 }
 
 type Catalog struct {
-	Version   int64           `json:"catalog_version"`
-	IssuedAt  time.Time       `json:"issued_at"`
-	ExpiresAt time.Time       `json:"expires_at"`
-	Regions   []CatalogRegion `json:"regions"`
-	Signature string          `json:"signature"`
-	SignedPayload string      `json:"signed_payload"`
+	Version       int64           `json:"catalog_version"`
+	IssuedAt      time.Time       `json:"issued_at"`
+	ExpiresAt     time.Time       `json:"expires_at"`
+	Regions       []CatalogRegion `json:"regions"`
+	Signature     string          `json:"signature"`
+	SignedPayload string          `json:"signed_payload"`
 }
 
 type CatalogRegion struct {
