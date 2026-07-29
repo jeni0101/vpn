@@ -16,7 +16,7 @@ import java.time.Instant
 class EnrollmentClient {
     fun enroll(document: String): MultiRegionProfile {
         val invite = JSONObject(document)
-        require(invite.keySet() == setOf(
+        require(invite.keys().asSequence().toSet() == setOf(
             "version", "type", "management_url", "token", "expires_at",
             "device_name", "catalog_signing_key", "purpose"
         ))

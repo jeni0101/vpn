@@ -159,7 +159,7 @@ public sealed class EnrollmentClient(HttpClient http)
         }
         try {
             var algorithm = SignatureAlgorithm.Ed25519;
-            using var publicKey = PublicKey.Import(
+            var publicKey = PublicKey.Import(
                 algorithm, publicBytes, KeyBlobFormat.RawPublicKey);
             if (!algorithm.Verify(publicKey, payload, signature))
                 throw new CryptographicException("地区清单签名无效");
