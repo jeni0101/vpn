@@ -13,7 +13,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net"
 	"net/netip"
 	"regexp"
 	"strconv"
@@ -555,12 +554,6 @@ func (s *Service) DesiredState(
 			plaintext[i] = 0
 		}
 	}
-	port := 53147
-	if _, portValue, splitErr := net.SplitHostPort(node.Endpoint); splitErr == nil {
-		if parsed, parseErr := strconv.Atoi(portValue); parseErr == nil {
-			port = parsed
-		}
-	}
 	interfaceIPv4, err := interfaceAddress(region.IPv4Network)
 	if err != nil {
 		return model.NodeDesiredState{}, err
@@ -572,7 +565,7 @@ func (s *Service) DesiredState(
 	state := model.NodeDesiredState{
 		NodeID: node.ID, RegionCode: node.RegionCode,
 		InterfaceIPv4: interfaceIPv4, InterfaceIPv6: interfaceIPv6,
-		ExitMode: region.ExitMode, ListenPort: port, Peers: peers,
+		ExitMode: region.ExitMode, ListenPort: 53147, Peers: peers,
 	}
 	encoded, err := json.Marshal(state)
 	if err != nil {

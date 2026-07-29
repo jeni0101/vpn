@@ -161,6 +161,9 @@ func TestV2RegionsDesiredStateAndAppleBundle(t *testing.T) {
 	}
 	myNodes, _ := service.Nodes(ctx, "MY", true)
 	myNode := myNodes[0]
+	// Shared public IP products may translate a random public port to the
+	// node's fixed internal WireGuard port.
+	myNode.Endpoint = "203.0.113.20:10067"
 	myNode.ServerPublicKey = myServer.PublicKey().String()
 	myNode.Enabled = true
 	if err := service.UpsertNode(ctx, myNode); err != nil {
@@ -215,6 +218,7 @@ func TestV2RegionsDesiredStateAndAppleBundle(t *testing.T) {
 		t.Fatal(err)
 	}
 	if desired.ExitMode != model.ExitModeIPv4BlockIPv6 ||
+		desired.ListenPort != 53147 ||
 		len(desired.Peers) != 1 ||
 		desired.Peers[0].PublicKey != myClient.PublicKey().String() {
 		t.Fatalf("unexpected Kuala Lumpur desired state: %#v", desired)

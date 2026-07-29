@@ -59,3 +59,17 @@ agent. The second command verifies a recent healthy node report, backs up the
 central SQLite database, enables the node before the region, writes an audit
 event, and rolls both records back if the update fails. Disable in the reverse
 safe order with the same commands and `false`.
+
+## Tokyo (`JP`, `jp-tyo-01`)
+
+- NAT ingress: `38.226.195.219`
+- WireGuard mapping: public `10067/udp` to private `53147/udp`
+- Tunnel networks: `10.68.0.0/24`, `fd68:68:68::/64`
+- Exit mode: `ipv4_exit_ipv6_blocked`
+- Probe: `https://019fad31d71a799a9fb0dba5ce427e6e.ap-northeast-1.c9b2d4.cloud/latency`
+
+The Tokyo VM has only private address `10.198.12.113/32`. LAS terminates HTTPS
+on its generated HTTP proxy endpoint and forwards the probe to private TCP 80.
+WireGuard keeps listening on private UDP 53147 even though clients connect to
+the translated public port 10067. The node remains disabled until the proxy,
+the read-only agent report, and the full regional smoke test all pass.
