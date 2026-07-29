@@ -1,21 +1,26 @@
 package asia.tnestai.vpn
 
-import com.wireguard.crypto.Key
+import android.util.Base64
 import com.wireguard.crypto.KeyPair
+import org.json.JSONArray
 import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URI
 import java.net.URL
+import java.security.KeyFactory
 import java.security.SecureRandom
+import java.security.Signature
+import java.security.spec.X509EncodedKeySpec
 import java.time.Instant
 
 class EnrollmentClient {
-    data class Result(val config: String, val deviceName: String)
-
-    fun enroll(document: String): Result {
+    fun enroll(document: String): MultiRegionProfile {
         val invite = JSONObject(document)
-        require(invite.length() in 6..7)
-        require(invite.getInt("version") == 1)
+        require(invite.keySet() == setOf(
+            "version", "type", "management_url", "token", "expires_at",
+            "device_name", "catalog_signing_key", "purpose"
+        ))
+        require(invite.getInt("version") == 2)
         require(invite.getString("type") == "tnest-vpn-enrollment")
         val origin = URI(invite.getString("management_url"))
         require(origin.scheme == "https" && origin.host == BuildConfig.TNEST_MANAGEMENT_HOST &&
@@ -23,47 +28,197 @@ class EnrollmentClient {
         require(Instant.parse(invite.getString("expires_at")).isAfter(Instant.now()))
         val token = invite.getString("token")
         require(token.length >= 43)
-        val pair = KeyPair()
-        val pskBytes = ByteArray(32).also(SecureRandom()::nextBytes)
-        val psk = Key.fromBytes(pskBytes)
-        pskBytes.fill(0)
+        val signingKey = invite.getString("catalog_signing_key")
 
-        val request = JSONObject()
-            .put("token", token)
-            .put("public_key", pair.publicKey.toBase64())
-            .put("preshared_key", psk.toBase64())
-        val connection = URL("${origin.scheme}://${origin.host}/api/v1/enrollments/claim")
-            .openConnection() as HttpURLConnection
-        connection.requestMethod = "POST"
-        connection.connectTimeout = 10_000
-        connection.readTimeout = 20_000
-        connection.doOutput = true
-        connection.setRequestProperty("Content-Type", "application/json")
-        connection.outputStream.use { it.write(request.toString().toByteArray()) }
-        require(connection.responseCode == 200) { "注册失败（HTTP ${connection.responseCode}）" }
-        val response = connection.inputStream.bufferedReader().use { JSONObject(it.readText()) }
-        val device = response.getJSONObject("device")
-        val config = response.getJSONObject("configuration")
-        val peer = config.getJSONObject("peer")
-        val addresses = config.getJSONArray("address").let { "${it.getString(0)}, ${it.getString(1)}" }
-        val dns = config.getJSONArray("dns").let { array ->
-            (0 until array.length()).joinToString(", ") { array.getString(it) }
+        val catalogEnvelope = requestJson(
+            URL("${origin.scheme}://${origin.host}/api/v2/client/catalog"), "GET", null
+        )
+        val catalog = verifiedCatalog(catalogEnvelope, signingKey)
+        require(Instant.parse(catalog.getString("expires_at")).isAfter(Instant.now()))
+        val generated = mutableMapOf<String, Generated>()
+        val credentials = JSONArray()
+        val catalogRegions = catalog.getJSONArray("regions")
+        for (index in 0 until catalogRegions.length()) {
+            val region = catalogRegions.getJSONObject(index)
+            if (region.getJSONArray("nodes").length() == 0) continue
+            val pair = KeyPair()
+            val pskBytes = ByteArray(32).also(SecureRandom()::nextBytes)
+            val generatedRegion = Generated(
+                pair.privateKey.toBase64(), pair.publicKey.toBase64(),
+                Base64.encodeToString(pskBytes, Base64.NO_WRAP)
+            )
+            pskBytes.fill(0)
+            generated[region.getString("code")] = generatedRegion
+            credentials.put(JSONObject()
+                .put("region_code", region.getString("code"))
+                .put("public_key", generatedRegion.publicKey)
+                .put("preshared_key", generatedRegion.presharedKey))
         }
-        val rendered = """
-            [Interface]
-            PrivateKey = ${pair.privateKey.toBase64()}
-            Address = $addresses
-            DNS = $dns
-            MTU = ${config.getInt("mtu")}
-
-            [Peer]
-            PublicKey = ${peer.getString("server_public_key")}
-            PresharedKey = ${psk.toBase64()}
-            Endpoint = ${peer.getString("endpoint")}
-            AllowedIPs = 0.0.0.0/0, ::/0
-            PersistentKeepalive = 25
-        """.trimIndent() + "\n"
-        SafeConfig.parse(rendered)
-        return Result(rendered, device.getString("name"))
+        val claim = JSONObject().put("token", token).put("credentials", credentials)
+        val response = requestJson(
+            URL("${origin.scheme}://${origin.host}/api/v2/enrollments/claim"),
+            "POST", claim
+        )
+        val signedResponseCatalog = verifiedCatalog(response.getJSONObject("catalog"), signingKey)
+        val configurations = response.getJSONArray("regions")
+        val byCode = (0 until configurations.length()).associate {
+            val value = configurations.getJSONObject(it)
+            value.getString("region_code") to value
+        }
+        val names = (0 until signedResponseCatalog.getJSONArray("regions").length()).associate {
+            val value = signedResponseCatalog.getJSONArray("regions").getJSONObject(it)
+            value.getString("code") to value.getString("display_name")
+        }
+        val regions = generated.map { (code, secret) ->
+            val value = requireNotNull(byCode[code])
+            val nodes = value.getJSONArray("nodes")
+            RegionConfiguration(
+                code, names[code] ?: code,
+                value.getJSONArray("address").strings(),
+                value.getJSONArray("dns").strings(), value.getInt("mtu"),
+                value.getInt("config_version"),
+                (0 until nodes.length()).map { CatalogNode.fromJson(nodes.getJSONObject(it)) },
+                secret.privateKey, secret.presharedKey
+            )
+        }.sortedBy { it.code }
+        val deviceToken = response.getString("device_token")
+        require(deviceToken.length >= 32)
+        return MultiRegionProfile(
+            invite.getString("device_name"), origin.toString(), deviceToken, signingKey,
+            signedResponseCatalog.getLong("catalog_version"),
+            signedResponseCatalog.getString("expires_at"), regions
+        )
     }
+
+    fun sync(profile: MultiRegionProfile): MultiRegionProfile {
+        val origin = URI(profile.managementUrl)
+        val envelope = requestJson(
+            URL("${origin.scheme}://${origin.host}/api/v2/client/catalog"), "GET", null
+        )
+        val catalog = verifiedCatalog(envelope, profile.catalogSigningKey)
+        require(Instant.parse(catalog.getString("expires_at")).isAfter(Instant.now()))
+        val current = requestJson(
+            URL("${origin.scheme}://${origin.host}/api/v2/client/regions"),
+            "GET", null, profile.deviceToken
+        ).getJSONArray("regions")
+        val currentByCode = (0 until current.length()).associate {
+            val value = current.getJSONObject(it)
+            value.getString("region_code") to value
+        }
+        val catalogRegions = catalog.getJSONArray("regions")
+        val names = (0 until catalogRegions.length()).associate {
+            val value = catalogRegions.getJSONObject(it)
+            value.getString("code") to value.getString("display_name")
+        }
+        val result = profile.regions.map { existing ->
+            currentByCode[existing.code]?.let { configuration ->
+                existing.copy(
+                    addresses = configuration.getJSONArray("address").strings(),
+                    dns = configuration.getJSONArray("dns").strings(),
+                    mtu = configuration.getInt("mtu"),
+                    configVersion = configuration.getInt("config_version"),
+                    nodes = configuration.getJSONArray("nodes").let { nodes ->
+                        (0 until nodes.length()).map {
+                            CatalogNode.fromJson(nodes.getJSONObject(it))
+                        }
+                    }
+                )
+            } ?: existing
+        }.toMutableList()
+        for (index in 0 until catalogRegions.length()) {
+            val region = catalogRegions.getJSONObject(index)
+            val code = region.getString("code")
+            if (result.any { it.code.equals(code, ignoreCase = true) } ||
+                region.getJSONArray("nodes").length() == 0) continue
+            val pair = KeyPair()
+            val pskBytes = ByteArray(32).also(SecureRandom()::nextBytes)
+            val psk = Base64.encodeToString(pskBytes, Base64.NO_WRAP)
+            pskBytes.fill(0)
+            val body = JSONObject()
+                .put("region_code", code)
+                .put("public_key", pair.publicKey.toBase64())
+                .put("preshared_key", psk)
+            val configuration = requestJson(
+                URL("${origin.scheme}://${origin.host}/api/v2/client/regions/$code/enroll"),
+                "POST", body, profile.deviceToken
+            ).getJSONObject("configuration")
+            result += RegionConfiguration(
+                code, names[code] ?: code,
+                configuration.getJSONArray("address").strings(),
+                configuration.getJSONArray("dns").strings(),
+                configuration.getInt("mtu"), configuration.getInt("config_version"),
+                configuration.getJSONArray("nodes").let { nodes ->
+                    (0 until nodes.length()).map { CatalogNode.fromJson(nodes.getJSONObject(it)) }
+                },
+                pair.privateKey.toBase64(), psk
+            )
+        }
+        return profile.copy(
+            catalogVersion = catalog.getLong("catalog_version"),
+            catalogExpiresAt = catalog.getString("expires_at"),
+            regions = result
+        )
+    }
+
+    private fun requestJson(
+        url: URL,
+        method: String,
+        body: JSONObject?,
+        bearer: String? = null
+    ): JSONObject {
+        val connection = url.openConnection() as HttpURLConnection
+        try {
+            connection.requestMethod = method
+            connection.connectTimeout = 10_000
+            connection.readTimeout = 20_000
+            connection.useCaches = false
+            if (bearer != null) {
+                connection.setRequestProperty("Authorization", "Bearer $bearer")
+            }
+            if (body != null) {
+                connection.doOutput = true
+                connection.setRequestProperty("Content-Type", "application/json")
+                connection.outputStream.use { it.write(body.toString().toByteArray()) }
+            }
+            require(connection.responseCode in 200..299) {
+                "注册失败（HTTP ${connection.responseCode}）"
+            }
+            return connection.inputStream.bufferedReader().use { JSONObject(it.readText()) }
+        } finally {
+            connection.disconnect()
+        }
+    }
+
+    private fun verifiedCatalog(envelope: JSONObject, encodedKey: String): JSONObject {
+        val payload = Base64.decode(envelope.getString("signed_payload"), Base64.NO_WRAP)
+        val signature = Base64.decode(envelope.getString("signature"), Base64.NO_WRAP)
+        val rawKey = Base64.decode(encodedKey, Base64.NO_WRAP)
+        val x509Prefix = byteArrayOf(
+            0x30, 0x2a, 0x30, 0x05, 0x06, 0x03, 0x2b, 0x65, 0x70, 0x03, 0x21, 0x00
+        )
+        val publicKey = KeyFactory.getInstance("Ed25519").generatePublic(
+            X509EncodedKeySpec(x509Prefix + rawKey)
+        )
+        val valid = Signature.getInstance("Ed25519").run {
+            initVerify(publicKey)
+            update(payload)
+            verify(signature)
+        }
+        rawKey.fill(0)
+        signature.fill(0)
+        require(valid) { "地区清单签名无效" }
+        return JSONObject(payload.toString(Charsets.UTF_8)).also {
+            payload.fill(0)
+            require(it.optString("signature").isEmpty())
+            require(it.optString("signed_payload").isEmpty())
+        }
+    }
+
+    private data class Generated(
+        val privateKey: String,
+        val publicKey: String,
+        val presharedKey: String
+    )
 }
+
+private fun JSONArray.strings() = (0 until length()).map(::getString)

@@ -397,6 +397,18 @@ function Devices({
       onError(message(reason));
     }
   };
+  const downloadAppleBundle = async (device: Device) => {
+    const code = prompt("重新生成 Apple 多地区配置需要当前 TOTP 验证码");
+    if (!code) return;
+    try {
+      const result = await api.appleBundle(device.id, code);
+      const link = document.createElement("a");
+      link.href = result.download_url;
+      link.click();
+    } catch (reason) {
+      onError(message(reason));
+    }
+  };
   return (
     <Panel>
       <div className="panel-heading">
@@ -416,7 +428,11 @@ function Devices({
               <div><strong>↓ {formatRate(rates[device.id]?.downloadBps ?? 0)}</strong><small>↑ {formatRate(rates[device.id]?.uploadBps ?? 0)}</small></div>
               <DeviceStatus device={device} />
               <div className="row-actions">
-                <Button disabled={device.status !== "active"} onClick={() => void rotate(device)} variant="ghost">轮换</Button>
+                {device.platform === "ios" || device.platform === "macos" ? (
+                  <Button disabled={device.status !== "active"} onClick={() => void downloadAppleBundle(device)} variant="ghost">下载地区 ZIP</Button>
+                ) : (
+                  <Button disabled={device.status !== "active"} onClick={() => void rotate(device)} variant="ghost">轮换</Button>
+                )}
                 <Button disabled={device.status !== "active"} onClick={() => void revoke(device)} variant="danger">撤销</Button>
               </div>
             </div>
@@ -643,6 +659,7 @@ function AddDevice({
   const [mode, setMode] = useState("invite");
   const [totp, setTotp] = useState("");
   const [busy, setBusy] = useState(false);
+  const applePlatform = platform === "ios" || platform === "macos";
   const submit = async (event: FormEvent) => {
     event.preventDefault();
     setBusy(true);
@@ -661,8 +678,12 @@ function AddDevice({
   return (
     <form onSubmit={submit}>
       <label>设备名称<input autoFocus onChange={(event) => setName(event.target.value)} placeholder="例如：办公电脑" required value={name} /></label>
-      <label>平台<select onChange={(event) => setPlatform(event.target.value)} value={platform}><option value="windows">Windows</option><option value="android">Android</option><option value="ios">iOS</option><option value="macos">macOS</option><option value="other">其他</option></select></label>
-      <label>配置方式<select onChange={(event) => setMode(event.target.value)} value={mode}><option value="invite">TNest 安全注册文件（推荐）</option><option value="standard">标准 WireGuard .conf</option><option value="qr">WireGuard 二维码 PNG</option></select></label>
+      <label>平台<select onChange={(event) => {
+        const value = event.target.value;
+        setPlatform(value);
+        setMode(value === "ios" || value === "macos" ? "apple_bundle" : "invite");
+      }} value={platform}><option value="windows">Windows</option><option value="android">Android</option><option value="ios">iOS</option><option value="macos">macOS</option><option value="other">其他</option></select></label>
+      <label>配置方式<select onChange={(event) => setMode(event.target.value)} value={mode}>{applePlatform ? <option value="apple_bundle">Apple 多地区 WireGuard ZIP（推荐）</option> : <><option value="invite">TNest 安全注册文件（推荐）</option><option value="standard">标准 WireGuard .conf</option><option value="qr">WireGuard 二维码 PNG</option></>}</select></label>
       <label>当前 TOTP<input autoComplete="one-time-code" inputMode="numeric" onChange={(event) => setTotp(event.target.value)} required value={totp} /></label>
       <div className="dialog-actions"><Button onClick={onClose} variant="secondary">取消</Button><Button loading={busy} type="submit">创建并下载</Button></div>
     </form>

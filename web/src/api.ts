@@ -79,6 +79,16 @@ export const api = {
       },
     );
   },
+  appleBundle(id: string, totp: string) {
+    return request<{ device: Device; download_url: string; expires_at: string }>(
+      `/api/v2/admin/devices/${encodeURIComponent(id)}/apple-bundle`,
+      {
+        method: "POST",
+        headers: { "X-TNest-TOTP": totp },
+        body: "{}",
+      },
+    );
+  },
   async usage(options: UsageQuery = { range: "24h" }) {
     const window = usageWindow(options.range, options.now);
     const search = new URLSearchParams({

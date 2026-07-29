@@ -237,6 +237,28 @@ func (c *Client) NodeDesiredState(
 	return response, err
 }
 
+func (c *Client) CreateAppleBundle(
+	ctx context.Context,
+	request manager.CreateRequest,
+) (manager.AppleBundleResult, error) {
+	var response manager.AppleBundleResult
+	err := c.do(ctx, http.MethodPost, "/v2/devices/apple-bundle", request, &response)
+	return response, err
+}
+
+func (c *Client) AppleBundle(
+	ctx context.Context,
+	deviceID string,
+) (manager.AppleBundleResult, error) {
+	var response manager.AppleBundleResult
+	err := c.do(
+		ctx, http.MethodPost,
+		"/v2/devices/"+url.PathEscape(deviceID)+"/apple-bundle",
+		struct{}{}, &response,
+	)
+	return response, err
+}
+
 func (c *Client) do(ctx context.Context, method, path string, request, response any) error {
 	return c.doAuthenticated(ctx, method, path, "", request, response)
 }

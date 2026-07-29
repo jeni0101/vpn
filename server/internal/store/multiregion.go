@@ -268,6 +268,43 @@ func (s *Store) DeviceRegion(
 	return value, sealed, err
 }
 
+func (s *Store) SetDeviceRegionPrivateKey(
+	ctx context.Context,
+	deviceID, regionCode string,
+	sealed []byte,
+) error {
+	if len(sealed) == 0 {
+		return errors.New("invalid sealed private key")
+	}
+	result, err := s.db.ExecContext(ctx, `UPDATE device_region_credentials
+		SET private_key_sealed=?,updated_at=?
+		WHERE device_id=? AND region_code=?`,
+		sealed, time.Now().UTC().Format(time.RFC3339Nano), deviceID,
+		strings.ToUpper(strings.TrimSpace(regionCode)))
+	if err != nil {
+		return err
+	}
+	if count, _ := result.RowsAffected(); count != 1 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+func (s *Store) DeviceRegionSecrets(
+	ctx context.Context,
+	deviceID, regionCode string,
+) ([]byte, []byte, error) {
+	var sealedPSK, sealedPrivate []byte
+	err := s.db.QueryRowContext(ctx, `SELECT psk_sealed,private_key_sealed
+		FROM device_region_credentials WHERE device_id=? AND region_code=?`,
+		deviceID, strings.ToUpper(strings.TrimSpace(regionCode)),
+	).Scan(&sealedPSK, &sealedPrivate)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil, ErrNotFound
+	}
+	return sealedPSK, sealedPrivate, err
+}
+
 func (s *Store) DeviceSlot(ctx context.Context, deviceID string) (int, error) {
 	var slot int
 	err := s.db.QueryRowContext(ctx, `SELECT slot FROM devices WHERE id=?`, deviceID).Scan(&slot)

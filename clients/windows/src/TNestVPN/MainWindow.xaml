@@ -19,6 +19,13 @@
                            Foreground="#66736D" Margin="0,8,0,28"/>
                 <Button Content="导入配置" Width="140" Height="42" HorizontalAlignment="Left"
                         Click="ImportClick"/>
+                <StackPanel Orientation="Horizontal" Margin="0,12,0,0">
+                    <ComboBox x:Name="RegionBox" Width="220" Height="42"
+                              DisplayMemberPath="DisplayName" IsEnabled="False"
+                              SelectionChanged="RegionSelectionChanged"/>
+                    <Button x:Name="LatencyButton" Content="测试延迟" Width="110" Height="42"
+                            Margin="10,0,0,0" IsEnabled="False" Click="TestLatencyClick"/>
+                </StackPanel>
                 <Button x:Name="ConnectButton" Content="连接" Width="140" Height="42"
                         HorizontalAlignment="Left" Margin="0,12,0,0" IsEnabled="False"
                         Click="ConnectClick"/>

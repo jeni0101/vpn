@@ -75,12 +75,14 @@ func (s *Signer) PublicKey() string {
 
 func (s *Signer) Sign(value *model.Catalog) error {
 	value.Signature = ""
+	value.SignedPayload = ""
 	payload, err := json.Marshal(value)
 	if err != nil {
 		return err
 	}
 	signature := ed25519.Sign(s.private, payload)
 	value.Signature = base64.RawStdEncoding.EncodeToString(signature)
+	value.SignedPayload = base64.RawStdEncoding.EncodeToString(payload)
 	return nil
 }
 
@@ -93,7 +95,20 @@ func Verify(value model.Catalog, encodedPublicKey string) bool {
 	if err != nil || len(signature) != ed25519.SignatureSize {
 		return false
 	}
+	payload, err := base64.RawStdEncoding.DecodeString(value.SignedPayload)
+	if err != nil || !ed25519.Verify(ed25519.PublicKey(public), payload, signature) {
+		return false
+	}
+	var signed model.Catalog
+	if json.Unmarshal(payload, &signed) != nil ||
+		signed.Signature != "" || signed.SignedPayload != "" {
+		return false
+	}
 	value.Signature = ""
-	payload, err := json.Marshal(value)
-	return err == nil && ed25519.Verify(ed25519.PublicKey(public), payload, signature)
+	value.SignedPayload = ""
+	current, err := json.Marshal(value)
+	if err != nil {
+		return false
+	}
+	return string(current) == string(payload)
 }

@@ -1,12 +1,17 @@
 package manager
 
 import (
+	"archive/zip"
+	"bytes"
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/binary"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/netip"
 	"regexp"
@@ -168,6 +173,11 @@ type ClaimV2Result struct {
 
 type EnrollRegionResult struct {
 	Configuration model.RegionConfiguration `json:"configuration"`
+}
+
+type AppleBundleResult struct {
+	Device model.Device `json:"device"`
+	Bundle []byte       `json:"bundle"`
 }
 
 type ImportRequest struct {
@@ -555,12 +565,21 @@ func (s *Service) DesiredState(
 	if err != nil {
 		return model.NodeDesiredState{}, err
 	}
-	version := s.now().UTC().Unix()
-	return model.NodeDesiredState{
-		Version: version, NodeID: node.ID, RegionCode: node.RegionCode,
+	state := model.NodeDesiredState{
+		NodeID: node.ID, RegionCode: node.RegionCode,
 		InterfaceIPv4: interfaceIPv4, InterfaceIPv6: interfaceIPv6,
 		ExitMode: region.ExitMode, ListenPort: port, Peers: peers,
-	}, nil
+	}
+	encoded, err := json.Marshal(state)
+	if err != nil {
+		return model.NodeDesiredState{}, err
+	}
+	digest := sha256.Sum256(encoded)
+	state.Version = int64(binary.BigEndian.Uint64(digest[:8]) & ((1 << 63) - 1))
+	if state.Version == 0 {
+		state.Version = 1
+	}
+	return state, nil
 }
 
 func (s *Service) CreateRotationInvite(ctx context.Context, id string) (InviteResult, error) {
@@ -649,6 +668,339 @@ func (s *Service) CreateStandard(ctx context.Context, request CreateRequest) (St
 		Device: device,
 		Config: s.renderClient(device, privateKey.String(), psk.String()),
 	}, nil
+}
+
+type appleRegionMaterial struct {
+	region     model.Region
+	node       model.Node
+	credential model.DeviceRegionCredential
+	privateKey string
+	presharedKey string
+	sealedPSK []byte
+	sealedPrivate []byte
+}
+
+func (s *Service) CreateAppleBundle(
+	ctx context.Context,
+	request CreateRequest,
+) (AppleBundleResult, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	name, platform, err := validateCreate(request)
+	if err != nil {
+		return AppleBundleResult{}, err
+	}
+	if platform != "ios" && platform != "macos" {
+		return AppleBundleResult{}, errors.New("Apple bundle requires ios or macos platform")
+	}
+	now := s.now().UTC()
+	slot, err := s.store.NextSlot(ctx, now)
+	if err != nil {
+		return AppleBundleResult{}, err
+	}
+	device := newDevice(name, platform, slot, model.StatusActive, now)
+	materials, err := s.newAppleMaterials(ctx, device, slot)
+	if err != nil {
+		return AppleBundleResult{}, err
+	}
+	var singapore appleRegionMaterial
+	for _, material := range materials {
+		if material.region.Code == "SG" {
+			singapore = material
+			break
+		}
+	}
+	if singapore.region.Code == "" {
+		return AppleBundleResult{}, errors.New("Singapore region is not ready")
+	}
+	device.PublicKey = singapore.credential.PublicKey
+	oldPeers, err := s.peerMaterials(ctx, "")
+	if err != nil {
+		return AppleBundleResult{}, err
+	}
+	candidate := append(append([]PeerMaterial(nil), oldPeers...), PeerMaterial{
+		Device: device, PresharedKey: singapore.presharedKey,
+	})
+	if err := s.wg.Apply(ctx, candidate); err != nil {
+		return AppleBundleResult{}, err
+	}
+	if err := s.store.CreateDevice(ctx, device, slot, singapore.sealedPSK); err != nil {
+		_ = s.wg.Apply(ctx, oldPeers)
+		return AppleBundleResult{}, err
+	}
+	for _, material := range materials {
+		if err := s.store.UpsertDeviceRegion(
+			ctx, material.credential, material.sealedPSK, now,
+		); err != nil {
+			_ = s.store.DeleteDevice(ctx, device.ID)
+			_ = s.wg.Apply(ctx, oldPeers)
+			return AppleBundleResult{}, err
+		}
+		if err := s.store.SetDeviceRegionPrivateKey(
+			ctx, device.ID, material.region.Code, material.sealedPrivate,
+		); err != nil {
+			_ = s.store.DeleteDevice(ctx, device.ID)
+			_ = s.wg.Apply(ctx, oldPeers)
+			return AppleBundleResult{}, err
+		}
+	}
+	bundle, err := renderAppleZIP(materials)
+	if err != nil {
+		return AppleBundleResult{}, err
+	}
+	for index := range materials {
+		materials[index].privateKey = ""
+		materials[index].presharedKey = ""
+	}
+	return AppleBundleResult{Device: device, Bundle: bundle}, nil
+}
+
+func (s *Service) AppleBundle(
+	ctx context.Context,
+	deviceID string,
+) (AppleBundleResult, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	device, _, slot, err := s.store.Device(ctx, deviceID)
+	if err != nil {
+		return AppleBundleResult{}, err
+	}
+	if device.Status != model.StatusActive ||
+		(device.Platform != "ios" && device.Platform != "macos") {
+		return AppleBundleResult{}, errors.New("Apple bundle requires an active Apple device")
+	}
+	regions, err := s.store.Regions(ctx, false)
+	if err != nil {
+		return AppleBundleResult{}, err
+	}
+	existing, err := s.store.DeviceRegions(ctx, device.ID)
+	if err != nil {
+		return AppleBundleResult{}, err
+	}
+	byRegion := make(map[string]model.DeviceRegionCredential, len(existing))
+	for _, credential := range existing {
+		byRegion[credential.RegionCode] = credential
+	}
+	materials := make([]appleRegionMaterial, 0, len(regions))
+	for _, region := range regions {
+		nodes, err := s.store.Nodes(ctx, region.Code, false)
+		if err != nil {
+			return AppleBundleResult{}, err
+		}
+		node, ok := firstReadyNode(nodes)
+		if !ok {
+			continue
+		}
+		credential, found := byRegion[region.Code]
+		if !found {
+			material, err := s.newAppleMaterial(device, slot, region, node)
+			if err != nil {
+				return AppleBundleResult{}, err
+			}
+			if err := s.store.UpsertDeviceRegion(
+				ctx, material.credential, material.sealedPSK, s.now().UTC(),
+			); err != nil {
+				return AppleBundleResult{}, err
+			}
+			if err := s.store.SetDeviceRegionPrivateKey(
+				ctx, device.ID, region.Code, material.sealedPrivate,
+			); err != nil {
+				return AppleBundleResult{}, err
+			}
+			materials = append(materials, material)
+			continue
+		}
+		sealedPSK, sealedPrivate, err := s.store.DeviceRegionSecrets(
+			ctx, device.ID, region.Code,
+		)
+		if err != nil {
+			return AppleBundleResult{}, err
+		}
+		if len(sealedPrivate) == 0 {
+			return AppleBundleResult{}, errors.New(
+				"legacy Apple device has no exportable private key; create a new Apple device",
+			)
+		}
+		psk, err := s.sealer.Open(sealedPSK, pskContext(region.Code))
+		if err != nil {
+			return AppleBundleResult{}, errors.New("cannot decrypt Apple region credential")
+		}
+		privateKey, err := s.sealer.Open(
+			sealedPrivate, "device-region-private:"+region.Code,
+		)
+		if err != nil {
+			clearBytes(psk)
+			return AppleBundleResult{}, errors.New("cannot decrypt Apple private key")
+		}
+		materials = append(materials, appleRegionMaterial{
+			region: region, node: node, credential: credential,
+			privateKey: string(privateKey), presharedKey: string(psk),
+		})
+		clearBytes(psk)
+		clearBytes(privateKey)
+	}
+	if len(materials) == 0 {
+		return AppleBundleResult{}, errors.New("no Apple regions are ready")
+	}
+	bundle, err := renderAppleZIP(materials)
+	if err != nil {
+		return AppleBundleResult{}, err
+	}
+	for index := range materials {
+		materials[index].privateKey = ""
+		materials[index].presharedKey = ""
+	}
+	return AppleBundleResult{Device: device, Bundle: bundle}, nil
+}
+
+func (s *Service) newAppleMaterials(
+	ctx context.Context,
+	device model.Device,
+	slot int,
+) ([]appleRegionMaterial, error) {
+	regions, err := s.store.Regions(ctx, false)
+	if err != nil {
+		return nil, err
+	}
+	result := make([]appleRegionMaterial, 0, len(regions))
+	for _, region := range regions {
+		nodes, err := s.store.Nodes(ctx, region.Code, false)
+		if err != nil {
+			return nil, err
+		}
+		node, ok := firstReadyNode(nodes)
+		if !ok {
+			continue
+		}
+		value, err := s.newAppleMaterial(device, slot, region, node)
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, value)
+	}
+	return result, nil
+}
+
+func (s *Service) newAppleMaterial(
+	device model.Device,
+	slot int,
+	region model.Region,
+	node model.Node,
+) (appleRegionMaterial, error) {
+	privateKey, err := wgtypes.GeneratePrivateKey()
+	if err != nil {
+		return appleRegionMaterial{}, err
+	}
+	psk, err := wgtypes.GenerateKey()
+	if err != nil {
+		return appleRegionMaterial{}, err
+	}
+	ipv4, err := addressAt(region.IPv4Network, slot)
+	if err != nil {
+		return appleRegionMaterial{}, err
+	}
+	ipv6, err := addressAt(region.IPv6Network, slot)
+	if err != nil {
+		return appleRegionMaterial{}, err
+	}
+	sealedPSK, err := s.sealer.Seal([]byte(psk.String()), pskContext(region.Code))
+	if err != nil {
+		return appleRegionMaterial{}, err
+	}
+	sealedPrivate, err := s.sealer.Seal(
+		[]byte(privateKey.String()), "device-region-private:"+region.Code,
+	)
+	if err != nil {
+		return appleRegionMaterial{}, err
+	}
+	return appleRegionMaterial{
+		region: region, node: node,
+		credential: model.DeviceRegionCredential{
+			DeviceID: device.ID, RegionCode: region.Code,
+			IPv4: ipv4, IPv6: ipv6, PublicKey: privateKey.PublicKey().String(),
+			Status: model.RegionStatusActive,
+		},
+		privateKey: privateKey.String(), presharedKey: psk.String(),
+		sealedPSK: sealedPSK, sealedPrivate: sealedPrivate,
+	}, nil
+}
+
+func firstReadyNode(nodes []model.Node) (model.Node, bool) {
+	for _, node := range nodes {
+		if node.Enabled && node.Endpoint != "" && node.ServerPublicKey != "" {
+			return node, true
+		}
+	}
+	return model.Node{}, false
+}
+
+func renderAppleZIP(materials []appleRegionMaterial) ([]byte, error) {
+	var output bytes.Buffer
+	writer := zip.NewWriter(&output)
+	for _, material := range materials {
+		name := appleTunnelName(material.region) + ".conf"
+		file, err := writer.CreateHeader(&zip.FileHeader{
+			Name: name, Method: zip.Deflate,
+		})
+		if err != nil {
+			return nil, err
+		}
+		dns := strings.Join(material.region.DNS, ", ")
+		config := fmt.Sprintf(`[Interface]
+PrivateKey = %s
+Address = %s/32, %s/128
+DNS = %s
+MTU = %d
+
+[Peer]
+PublicKey = %s
+PresharedKey = %s
+Endpoint = %s
+AllowedIPs = 0.0.0.0/0, ::/0
+PersistentKeepalive = 25
+`, material.privateKey, material.credential.IPv4, material.credential.IPv6,
+			dns, material.region.MTU, material.node.ServerPublicKey,
+			material.presharedKey, material.node.Endpoint)
+		if _, err := io.WriteString(file, config); err != nil {
+			return nil, err
+		}
+	}
+	if err := writer.Close(); err != nil {
+		return nil, err
+	}
+	return output.Bytes(), nil
+}
+
+func appleTunnelName(region model.Region) string {
+	switch region.Code {
+	case "SG":
+		return "TNest-SG-Singapore"
+	case "MY":
+		return "TNest-MY-Kuala-Lumpur"
+	}
+	var safe strings.Builder
+	for _, r := range region.DisplayName {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') ||
+			(r >= '0' && r <= '9') {
+			safe.WriteRune(r)
+		} else if safe.Len() > 0 {
+			safe.WriteByte('-')
+		}
+	}
+	return "TNest-" + region.Code + "-" + strings.Trim(safe.String(), "-")
+}
+
+func pskContext(regionCode string) string {
+	if regionCode == "SG" {
+		return "device-psk"
+	}
+	return "device-region-psk:" + regionCode
+}
+
+func clearBytes(value []byte) {
+	for index := range value {
+		value[index] = 0
+	}
 }
 
 func (s *Service) Claim(ctx context.Context, request ClaimRequest) (model.Device, error) {

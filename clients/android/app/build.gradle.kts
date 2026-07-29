@@ -15,7 +15,7 @@ android {
         versionCode = 1
         versionName = "0.1.0"
         val managementHost = providers.environmentVariable("TNEST_MANAGEMENT_HOST")
-            .orElse("vpn.example.com")
+            .orElse("vpn.tnestai.asia")
             .get()
         buildConfigField("String", "TNEST_MANAGEMENT_HOST", "\"$managementHost\"")
     }

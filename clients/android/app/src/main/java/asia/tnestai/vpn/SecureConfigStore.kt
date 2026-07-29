@@ -28,15 +28,25 @@ class SecureConfigStore(private val context: Context) {
         }
     }
 
-    fun save(config: String) {
+    fun save(config: String) = saveEncrypted("config", config)
+
+    fun saveProfile(profile: MultiRegionProfile) =
+        saveEncrypted("profile", profile.toJson())
+
+    fun load(): String? = loadEncrypted("config")
+
+    fun loadProfile(): MultiRegionProfile? =
+        loadEncrypted("profile")?.let(MultiRegionProfile::fromJson)
+
+    private fun saveEncrypted(name: String, valueText: String) {
         val cipher = Cipher.getInstance("AES/GCM/NoPadding")
         cipher.init(Cipher.ENCRYPT_MODE, key())
-        val value = cipher.iv + cipher.doFinal(config.toByteArray(Charsets.UTF_8))
-        prefs.edit().putString("config", Base64.encodeToString(value, Base64.NO_WRAP)).apply()
+        val value = cipher.iv + cipher.doFinal(valueText.toByteArray(Charsets.UTF_8))
+        prefs.edit().putString(name, Base64.encodeToString(value, Base64.NO_WRAP)).apply()
     }
 
-    fun load(): String? {
-        val encoded = prefs.getString("config", null) ?: return null
+    private fun loadEncrypted(name: String): String? {
+        val encoded = prefs.getString(name, null) ?: return null
         val value = Base64.decode(encoded, Base64.NO_WRAP)
         require(value.size > 12)
         val cipher = Cipher.getInstance("AES/GCM/NoPadding")

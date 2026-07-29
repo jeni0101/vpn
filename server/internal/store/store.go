@@ -159,6 +159,7 @@ func (s *Store) migrate(ctx context.Context) error {
 			ipv6 TEXT NOT NULL,
 			public_key TEXT NOT NULL,
 			psk_sealed BLOB,
+			private_key_sealed BLOB,
 			status TEXT NOT NULL,
 			created_at TEXT NOT NULL,
 			updated_at TEXT NOT NULL,
@@ -376,6 +377,11 @@ func (s *Store) CreateDevice(ctx context.Context, device model.Device, slot int,
 func (s *Store) DeletePendingDevice(ctx context.Context, id string) error {
 	_, err := s.db.ExecContext(ctx, `DELETE FROM devices WHERE id=? AND status=?`,
 		id, model.StatusPending)
+	return err
+}
+
+func (s *Store) DeleteDevice(ctx context.Context, id string) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM devices WHERE id=?`, id)
 	return err
 }
 

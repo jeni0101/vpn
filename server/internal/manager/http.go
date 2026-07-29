@@ -43,6 +43,8 @@ func NewHTTPServer(service *Service) http.Handler {
 	mux.HandleFunc("POST /v2/client/regions/{code}/enroll", server.enrollRegion)
 	mux.HandleFunc("GET /v2/client/usage", server.clientUsage)
 	mux.HandleFunc("GET /v2/node/desired-state", server.nodeDesiredState)
+	mux.HandleFunc("POST /v2/devices/apple-bundle", server.createAppleBundle)
+	mux.HandleFunc("POST /v2/devices/{id}/apple-bundle", server.appleBundle)
 	return http.MaxBytesHandler(mux, 128*1024)
 }
 
@@ -210,6 +212,28 @@ func (s *HTTPServer) clientUsage(w http.ResponseWriter, r *http.Request) {
 
 func (s *HTTPServer) nodeDesiredState(w http.ResponseWriter, r *http.Request) {
 	value, err := s.service.DesiredState(r.Context(), r.URL.Query().Get("node_id"))
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, value)
+}
+
+func (s *HTTPServer) createAppleBundle(w http.ResponseWriter, r *http.Request) {
+	var request CreateRequest
+	if !decodeJSON(w, r, &request) {
+		return
+	}
+	value, err := s.service.CreateAppleBundle(r.Context(), request)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, value)
+}
+
+func (s *HTTPServer) appleBundle(w http.ResponseWriter, r *http.Request) {
+	value, err := s.service.AppleBundle(r.Context(), r.PathValue("id"))
 	if err != nil {
 		writeError(w, err)
 		return

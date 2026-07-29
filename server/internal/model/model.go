@@ -119,6 +119,7 @@ type Catalog struct {
 	ExpiresAt time.Time       `json:"expires_at"`
 	Regions   []CatalogRegion `json:"regions"`
 	Signature string          `json:"signature"`
+	SignedPayload string      `json:"signed_payload"`
 }
 
 type CatalogRegion struct {

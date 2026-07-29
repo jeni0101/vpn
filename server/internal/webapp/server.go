@@ -105,6 +105,8 @@ func (s *Server) Handler() http.Handler {
 		s.requireAuth(http.HandlerFunc(s.adminNodes), true))
 	mux.Handle("PATCH /api/v2/admin/nodes/{id}",
 		s.requireAuth(http.HandlerFunc(s.adminNode), true))
+	mux.Handle("POST /api/v2/admin/devices/{id}/apple-bundle",
+		s.requireAuth(http.HandlerFunc(s.adminAppleBundle), true))
 	mux.HandleFunc("/", s.static)
 	return s.securityHeaders(http.MaxBytesHandler(mux, 256*1024))
 }
@@ -247,9 +249,9 @@ func clientBearer(w http.ResponseWriter, r *http.Request) (string, bool) {
 }
 
 func (s *Server) authorizeNode(w http.ResponseWriter, r *http.Request) (string, bool) {
-	nodeID := strings.ToLower(strings.TrimSpace(r.Header.Get("X-TNest-Node-ID")))
 	verify := r.Header.Get("X-TNest-Client-Verify")
 	distinguishedName := r.Header.Get("X-TNest-Client-DN")
+	nodeID := nodeIDFromDistinguishedName(distinguishedName)
 	tokenValue, tokenOK := clientBearer(w, r)
 	if !tokenOK {
 		return "", false
@@ -258,12 +260,31 @@ func (s *Server) authorizeNode(w http.ResponseWriter, r *http.Request) (string, 
 		len(tokenValue) == len(s.nodeAPIToken) &&
 		subtle.ConstantTimeCompare([]byte(tokenValue), s.nodeAPIToken) == 1
 	validCertificate := verify == "SUCCESS" && nodeID != "" &&
-		strings.Contains(distinguishedName, "CN="+nodeID)
+		len(nodeID) <= 80
 	if !validToken || !validCertificate {
 		jsonResponse(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
 		return "", false
 	}
 	return nodeID, true
+}
+
+func nodeIDFromDistinguishedName(value string) string {
+	for _, part := range strings.FieldsFunc(value, func(r rune) bool {
+		return r == ',' || r == '/'
+	}) {
+		part = strings.TrimSpace(part)
+		if len(part) > 3 && strings.EqualFold(part[:3], "CN=") {
+			nodeID := strings.ToLower(strings.TrimSpace(part[3:]))
+			for _, r := range nodeID {
+				if !((r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') ||
+					r == '-' || r == '_') {
+					return ""
+				}
+			}
+			return nodeID
+		}
+	}
+	return ""
 }
 
 func (s *Server) clientManagerError(w http.ResponseWriter, err error) {
@@ -356,6 +377,35 @@ func (s *Server) adminNode(w http.ResponseWriter, r *http.Request) {
 	}
 	s.auditEvent(r, sessionFrom(r).Username, "node.updated", "", value.ID)
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) adminAppleBundle(w http.ResponseWriter, r *http.Request) {
+	if !s.requireSensitiveTOTP(w, r) {
+		return
+	}
+	result, err := s.manager.AppleBundle(r.Context(), r.PathValue("id"))
+	if err != nil {
+		s.managerError(w, err)
+		return
+	}
+	defer clearSensitiveBytes(result.Bundle)
+	tokenValue, expires, err := s.downloads.Put(
+		safeFilename(result.Device.Name)+"-apple-regions.zip",
+		"application/zip", result.Bundle, 10*time.Minute,
+	)
+	if err != nil {
+		s.internalError(w, err)
+		return
+	}
+	s.auditEvent(
+		r, sessionFrom(r).Username, "device.apple_bundle_created",
+		result.Device.ID, "",
+	)
+	jsonResponse(w, http.StatusCreated, map[string]any{
+		"device": result.Device,
+		"download_url": "/api/v1/downloads/" + tokenValue,
+		"expires_at": expires,
+	})
 }
 
 func (s *Server) health(w http.ResponseWriter, r *http.Request) {
@@ -529,6 +579,29 @@ func (s *Server) createDevice(w http.ResponseWriter, r *http.Request) {
 		s.auditEvent(r, actor, action, result.Device.ID, "")
 		jsonResponse(w, http.StatusCreated, map[string]any{
 			"device": result.Device, "download_url": "/api/v1/downloads/" + token,
+			"expires_at": expires,
+		})
+	case "apple_bundle":
+		result, err := s.manager.CreateAppleBundle(r.Context(), manager.CreateRequest{
+			Name: request.Name, Platform: request.Platform,
+		})
+		if err != nil {
+			s.managerError(w, err)
+			return
+		}
+		defer clearSensitiveBytes(result.Bundle)
+		tokenValue, expires, err := s.downloads.Put(
+			safeFilename(result.Device.Name)+"-apple-regions.zip",
+			"application/zip", result.Bundle, 10*time.Minute,
+		)
+		if err != nil {
+			s.internalError(w, err)
+			return
+		}
+		s.auditEvent(r, actor, "device.apple_bundle_created", result.Device.ID, "")
+		jsonResponse(w, http.StatusCreated, map[string]any{
+			"device": result.Device,
+			"download_url": "/api/v1/downloads/" + tokenValue,
 			"expires_at": expires,
 		})
 	default:
@@ -866,4 +939,10 @@ func safeFilename(value string) string {
 		return "tnest-vpn"
 	}
 	return builder.String()
+}
+
+func clearSensitiveBytes(value []byte) {
+	for index := range value {
+		value[index] = 0
+	}
 }
