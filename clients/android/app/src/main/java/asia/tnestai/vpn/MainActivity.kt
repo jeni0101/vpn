@@ -41,6 +41,7 @@ class MainActivity : ComponentActivity() {
     private lateinit var store: SecureConfigStore
     private lateinit var ledger: UsageLedger
     private var profile: MultiRegionProfile? = null
+    private var pendingDocumentUri by mutableStateOf<Uri?>(null)
     private val selectedNodes = mutableMapOf<String, CatalogNode>()
     private data class UsageRanges(
         val day: UsageSummary,
@@ -53,6 +54,9 @@ class MainActivity : ComponentActivity() {
         controller = TunnelController(this)
         store = SecureConfigStore(this)
         ledger = UsageLedger(this)
+        pendingDocumentUri = intent
+            .takeIf { it.action == Intent.ACTION_VIEW }
+            ?.data
         profile = runCatching { store.loadProfile() }.getOrNull()
         if (profile != null && profile!!.regions.isNotEmpty()) {
             activateRegion(profile!!.regions.first().code)
@@ -60,6 +64,14 @@ class MainActivity : ComponentActivity() {
             store.load()?.let { controller.load(SafeConfig.parse(it)) }
         }
         setContent { App() }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        pendingDocumentUri = intent
+            .takeIf { it.action == Intent.ACTION_VIEW }
+            ?.data
     }
 
     private fun activateRegion(code: String): CatalogNode {
@@ -108,31 +120,52 @@ class MainActivity : ComponentActivity() {
             message = "配置已安全保存 · ${node.endpoint}"
         }
 
+        suspend fun importDocument(source: String) {
+            val document = ConfigDocumentParser.parse(source)
+            when (document.type) {
+                ConfigDocumentType.ENROLLMENT -> importEnrollment(document.text)
+                ConfigDocumentType.WIREGUARD -> {
+                    val config = SafeConfig.parse(document.text)
+                    profile = null
+                    activeProfile = null
+                    selectedRegion = ""
+                    selectedNodes.clear()
+                    store.clearProfile()
+                    store.save(document.text)
+                    controller.load(config)
+                    message = "WireGuard 配置已安全保存"
+                }
+            }
+        }
+
+        suspend fun importUri(uri: Uri) {
+            val text = withContext(Dispatchers.IO) {
+                contentResolver.openInputStream(uri)?.bufferedReader(Charsets.UTF_8)
+                    ?.use { it.readText() }
+                    ?: throw IllegalArgumentException("无法读取所选配置文件")
+            }
+            importDocument(text)
+        }
+
         val picker = rememberLauncherForActivityResult(
             ActivityResultContracts.OpenDocument()
         ) { uri: Uri? ->
             if (uri != null) scope.launch {
-                runCatching {
-                    val text = contentResolver.openInputStream(uri)!!
-                        .bufferedReader().use { it.readText() }
-                    if (text.trimStart().startsWith("{")) {
-                        importEnrollment(text)
-                    } else {
-                        val config = SafeConfig.parse(text)
-                        profile = null
-                        activeProfile = null
-                        store.save(text)
-                        controller.load(config)
-                        message = "标准配置已安全保存"
-                    }
-                }.onFailure { message = it.message ?: "导入失败" }
+                runCatching { importUri(uri) }
+                    .onFailure { message = it.message ?: "导入失败" }
             }
         }
         val scanner = rememberLauncherForActivityResult(ScanContract()) { result ->
             if (!result.contents.isNullOrBlank()) scope.launch {
-                runCatching { importEnrollment(result.contents) }
+                runCatching { importDocument(result.contents) }
                     .onFailure { message = it.message ?: "二维码无效" }
             }
+        }
+        LaunchedEffect(pendingDocumentUri) {
+            val uri = pendingDocumentUri ?: return@LaunchedEffect
+            runCatching { importUri(uri) }
+                .onFailure { message = it.message ?: "导入失败" }
+            pendingDocumentUri = null
         }
         LaunchedEffect(Unit) {
             activeProfile?.let { cached ->
@@ -280,10 +313,7 @@ class MainActivity : ComponentActivity() {
                     }
                 }
                 Button(onClick = {
-                    picker.launch(arrayOf(
-                        "text/plain", "application/x-wireguard-profile",
-                        "application/vnd.tnest.vpn-enrollment+json"
-                    ))
+                    picker.launch(arrayOf("*/*"))
                 }) { Text("导入配置") }
                 Button(onClick = {
                     scanner.launch(

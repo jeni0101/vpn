@@ -13,6 +13,7 @@
         android:theme="@style/Theme.TNestVPN">
         <activity
             android:name=".MainActivity"
+            android:launchMode="singleTop"
             android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
@@ -24,6 +25,8 @@
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data android:mimeType="application/vnd.tnest.vpn-enrollment+json" />
                 <data android:mimeType="application/x-wireguard-profile" />
+                <data android:mimeType="application/json" />
+                <data android:mimeType="application/octet-stream" />
                 <data android:mimeType="text/plain" />
             </intent-filter>
         </activity>

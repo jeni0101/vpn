@@ -33,6 +33,10 @@ class SecureConfigStore(private val context: Context) {
     fun saveProfile(profile: MultiRegionProfile) =
         saveEncrypted("profile", profile.toJson())
 
+    fun clearProfile() {
+        prefs.edit().remove("profile").apply()
+    }
+
     fun load(): String? = loadEncrypted("config")
 
     fun loadProfile(): MultiRegionProfile? =

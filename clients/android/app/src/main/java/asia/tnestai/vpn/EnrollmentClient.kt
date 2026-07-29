@@ -24,18 +24,24 @@ class EnrollmentClient {
         require(invite.keys().asSequence().toSet() == setOf(
             "version", "type", "management_url", "token", "expires_at",
             "device_name", "catalog_signing_key", "purpose"
-        ))
-        require(invite.getInt("version") == 2)
-        require(invite.getString("type") == "tnest-vpn-enrollment")
+        )) { "注册文件字段不完整或不受支持" }
+        require(invite.getInt("version") == 2) { "注册文件版本不受支持" }
+        require(invite.getString("type") == "tnest-vpn-enrollment") {
+            "这不是 TNest VPN 注册文件"
+        }
         val origin = URI(invite.getString("management_url"))
         require(origin.scheme == "https" && origin.host == BuildConfig.TNEST_MANAGEMENT_HOST &&
-                origin.rawPath.orEmpty() in listOf("", "/") && origin.rawQuery == null)
-        require(Instant.parse(invite.getString("expires_at")).isAfter(Instant.now()))
+                origin.rawPath.orEmpty() in listOf("", "/") && origin.rawQuery == null) {
+            "注册服务器地址不受信任"
+        }
+        require(Instant.parse(invite.getString("expires_at")).isAfter(Instant.now())) {
+            "注册文件已过期，请在 Web 管理端重新生成"
+        }
         val token = invite.getString("token")
-        require(token.length >= 43)
+        require(token.length >= 43) { "注册令牌无效" }
         val signingKey = invite.getString("catalog_signing_key")
         val purpose = invite.getString("purpose")
-        require(purpose == "enroll" || purpose == "migrate")
+        require(purpose == "enroll" || purpose == "migrate") { "注册用途不受支持" }
         if (purpose == "migrate") {
             requireNotNull(migrationConfig) {
                 "迁移现有设备需要本机原有的新加坡配置"

@@ -29,9 +29,13 @@ keystore。
 ## 使用
 
 1. 安装自己核对并签名的 APK。
-2. 选择 `.conf`/`.tnestvpn`，或扫描 Web 显示的一次性二维码。
-3. 首次连接时接受 Android `VpnService` 系统确认。
-4. 进入系统 VPN 设置，对 TNest VPN 启用“始终开启 VPN”和“无 VPN 时阻止连接”。
+2. 点“导入配置”选择 `.conf`/`.tnestvpn`；文件管理器把 `.tnestvpn` 标记为
+   `application/octet-stream` 或未知类型也可以选择。也可以直接在文件管理器中用
+   TNest VPN 打开该文件。
+3. “扫描二维码”同时支持 Web 生成的 WireGuard 配置二维码和 TNest 注册 JSON
+   二维码，客户端会自动识别。
+4. 首次连接时接受 Android `VpnService` 系统确认。
+5. 进入系统 VPN 设置，对 TNest VPN 启用“始终开启 VPN”和“无 VPN 时阻止连接”。
 
 `.tnestvpn` 的私钥和 PSK 在手机本地生成。完整配置使用 Android Keystore AES-GCM 加密后保存，应用禁用系统备份和明文网络。
 
