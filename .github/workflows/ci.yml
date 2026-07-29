@@ -22,9 +22,13 @@ jobs:
           cache: npm
           cache-dependency-path: web/package-lock.json
       - run: sudo apt-get update && sudo apt-get install -y age bats shellcheck wireguard-tools qrencode
-      - run: npm ci && npm audit --audit-level=high && npm run build
+      - run: npm ci
         working-directory: web
-      - run: go test -race ./... && go vet ./...
+      - run: npm audit --audit-level=high
+        working-directory: web
+      - run: npm run build
+        working-directory: web
+      - run: go test ./... && go vet ./...
         working-directory: server
       - run: tests/run.sh
       - uses: gitleaks/gitleaks-action@v2
