@@ -28,11 +28,13 @@ config_prepare \
     --cloud-firewall-ready \
     --recovery-ready >/dev/null
 
-grep -qx 'SSH_USER="ubuntu"' "${CONFIG_FILE}"
+grep -qx 'SSH_USER="vpnadmin"' "${CONFIG_FILE}"
 grep -qx 'SSH_PORT="22"' "${CONFIG_FILE}"
 grep -qx 'SERVER_PUBLIC_IPV4="8.8.8.8"' "${CONFIG_FILE}"
 grep -qx 'SERVER_PUBLIC_IPV6="2606:4700:4700::1111"' "${CONFIG_FILE}"
 grep -qx 'VPN_ENDPOINT_IPV4="8.8.8.8"' "${CONFIG_FILE}"
+grep -qx 'VPN_PORT="51999"' "${CONFIG_FILE}"
+grep -qx 'VPN_WEB_DOMAIN="vpn.example.com"' "${CONFIG_FILE}"
 grep -qx 'CLOUD_FIREWALL_CONFIRMED="yes"' "${CONFIG_FILE}"
 grep -qx 'CLOUD_RECOVERY_CONFIRMED="yes"' "${CONFIG_FILE}"
 [[ "$(stat -c '%a' "${CONFIG_FILE}")" == "600" ]]
