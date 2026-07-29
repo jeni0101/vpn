@@ -42,6 +42,11 @@ class MainActivity : ComponentActivity() {
     private lateinit var ledger: UsageLedger
     private var profile: MultiRegionProfile? = null
     private val selectedNodes = mutableMapOf<String, CatalogNode>()
+    private data class UsageRanges(
+        val day: UsageSummary,
+        val week: UsageSummary,
+        val month: UsageSummary
+    )
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -73,6 +78,8 @@ class MainActivity : ComponentActivity() {
         var message by remember { mutableStateOf("请选择 .conf 或 .tnestvpn 配置") }
         var usage by remember { mutableStateOf(TunnelController.Usage()) }
         var totals by remember { mutableStateOf(UsageLedger.Totals(0, 0, 0, 0, 0, 0)) }
+        var historical by remember { mutableStateOf<UsageRanges?>(null) }
+        var historyAvailable by remember { mutableStateOf(true) }
         var activeProfile by remember { mutableStateOf(profile) }
         var selectedRegion by remember {
             mutableStateOf(profile?.regions?.firstOrNull()?.code.orEmpty())
@@ -151,6 +158,24 @@ class MainActivity : ComponentActivity() {
                     totals = ledger.update(it.download, it.upload)
                 }
                 delay(5_000)
+            }
+        }
+        LaunchedEffect(activeProfile, selectedRegion) {
+            val current = activeProfile
+            if (current != null && selectedRegion.isNotBlank()) {
+                historyAvailable = true
+                historical = runCatching {
+                    withContext(Dispatchers.IO) {
+                        val client = EnrollmentClient()
+                        UsageRanges(
+                            client.usage(current, selectedRegion, "24h"),
+                            client.usage(current, selectedRegion, "7d"),
+                            client.usage(current, selectedRegion, "30d")
+                        )
+                    }
+                }.onFailure {
+                    historyAvailable = false
+                }.getOrNull()
             }
         }
         MaterialTheme {
@@ -239,6 +264,14 @@ class MainActivity : ComponentActivity() {
                         Text("当前　↓ ${formatBytes(totals.sessionDownload)}　↑ ${formatBytes(totals.sessionUpload)}")
                         Text("今日　↓ ${formatBytes(totals.todayDownload)}　↑ ${formatBytes(totals.todayUpload)}")
                         Text("本月　↓ ${formatBytes(totals.monthDownload)}　↑ ${formatBytes(totals.monthUpload)}")
+                        historical?.let {
+                            Text("服务器 24 小时　↓ ${formatBytes(it.day.downloadBytes)}　↑ ${formatBytes(it.day.uploadBytes)}")
+                            Text("服务器 7 天　↓ ${formatBytes(it.week.downloadBytes)}　↑ ${formatBytes(it.week.uploadBytes)}")
+                            Text("服务器 30 天　↓ ${formatBytes(it.month.downloadBytes)}　↑ ${formatBytes(it.month.uploadBytes)}")
+                        }
+                        if (!historyAvailable) {
+                            Text("服务器历史暂不可用；当前会话和本机累计仍可查看")
+                        }
                         if (usage.handshake > 0) {
                             Text("最近握手　${java.time.Instant.ofEpochMilli(usage.handshake)}")
                         }

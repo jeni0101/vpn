@@ -190,6 +190,30 @@ func (s *Store) migrate(ctx context.Context) error {
 			usage_sequence INTEGER NOT NULL DEFAULT 0,
 			reported_at TEXT NOT NULL
 		)`,
+		`CREATE TABLE IF NOT EXISTS regional_usage_state (
+			node_id TEXT NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
+			device_id TEXT NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+			region_code TEXT NOT NULL REFERENCES regions(code) ON DELETE RESTRICT,
+			last_rx INTEGER NOT NULL DEFAULT 0,
+			last_tx INTEGER NOT NULL DEFAULT 0,
+			total_upload INTEGER NOT NULL DEFAULT 0,
+			total_download INTEGER NOT NULL DEFAULT 0,
+			last_handshake TEXT,
+			updated_at TEXT NOT NULL,
+			PRIMARY KEY(node_id, device_id)
+		)`,
+		`CREATE TABLE IF NOT EXISTS regional_usage (
+			device_id TEXT NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+			region_code TEXT NOT NULL REFERENCES regions(code) ON DELETE RESTRICT,
+			node_id TEXT NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
+			bucket_kind TEXT NOT NULL,
+			bucket TEXT NOT NULL,
+			upload INTEGER NOT NULL DEFAULT 0,
+			download INTEGER NOT NULL DEFAULT 0,
+			PRIMARY KEY(device_id, region_code, node_id, bucket_kind, bucket)
+		)`,
+		`CREATE INDEX IF NOT EXISTS regional_usage_lookup
+		 ON regional_usage(device_id, region_code, bucket_kind, bucket)`,
 		`INSERT OR IGNORE INTO regions(
 			code,display_name,sort_order,exit_mode,ipv4_network,ipv6_network,
 			dns_json,mtu,enabled,config_version,updated_at

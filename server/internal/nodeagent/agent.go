@@ -17,6 +17,7 @@ import (
 	"strings"
 	"time"
 
+	"golang.zx2c4.com/wireguard/wgctrl"
 	"golang.zx2c4.com/wireguard/wgctrl/wgtypes"
 
 	"github.com/jeni0101/vpn/server/internal/model"
@@ -42,6 +43,8 @@ type Agent struct {
 	logger      *log.Logger
 	token       string
 	lastVersion int64
+	reportSequence int64
+	peerDeviceIDs map[string]string
 }
 
 func New(cfg Config, logger *log.Logger) (*Agent, error) {
@@ -73,6 +76,7 @@ func New(cfg Config, logger *log.Logger) (*Agent, error) {
 	return &Agent{
 		cfg: cfg, logger: logger, token: tokenValue,
 		client: &http.Client{Transport: transport, Timeout: 20 * time.Second},
+		peerDeviceIDs: make(map[string]string),
 	}, nil
 }
 
@@ -101,6 +105,10 @@ func (a *Agent) syncOnce(ctx context.Context) {
 		a.logger.Printf("rejected mismatched node identity")
 		a.report(ctx, false, 0, "node identity mismatch")
 		return
+	}
+	a.peerDeviceIDs = make(map[string]string, len(state.Peers))
+	for _, peer := range state.Peers {
+		a.peerDeviceIDs[peer.PublicKey] = peer.DeviceID
 	}
 	if state.Version != a.lastVersion {
 		if !a.cfg.ApplyChanges {
@@ -267,10 +275,16 @@ func renderSyncConfig(privateKey string, state model.NodeDesiredState) []byte {
 }
 
 func (a *Agent) report(ctx context.Context, healthy bool, peers int, lastError string) {
+	a.reportSequence++
+	usage, usageErr := a.collectUsage()
+	if usageErr != nil && lastError == "" {
+		lastError = "usage collection unavailable"
+	}
 	report := model.NodeReport{
 		NodeID: a.cfg.NodeID, Version: fmt.Sprintf("%d", a.lastVersion),
 		Healthy: healthy, PeerCount: peers, LastError: lastError,
 		ReportedAt: time.Now().UTC(),
+		UsageSequence: a.reportSequence, Usage: usage,
 	}
 	data, err := json.Marshal(report)
 	if err != nil {
@@ -291,6 +305,35 @@ func (a *Agent) report(ctx context.Context, healthy bool, peers int, lastError s
 		io.Copy(io.Discard, io.LimitReader(response.Body, 4096))
 		response.Body.Close()
 	}
+}
+
+func (a *Agent) collectUsage() ([]model.NodeUsageCounter, error) {
+	client, err := wgctrl.New()
+	if err != nil {
+		return nil, err
+	}
+	defer client.Close()
+	device, err := client.Device(a.cfg.Interface)
+	if err != nil {
+		return nil, err
+	}
+	result := make([]model.NodeUsageCounter, 0, len(device.Peers))
+	for _, peer := range device.Peers {
+		publicKey := peer.PublicKey.String()
+		deviceID, ok := a.peerDeviceIDs[publicKey]
+		if !ok {
+			continue
+		}
+		result = append(result, model.NodeUsageCounter{
+			DeviceID: deviceID, PublicKey: publicKey,
+			ReceiveBytes: peer.ReceiveBytes, TransmitBytes: peer.TransmitBytes,
+			LastHandshake: peer.LastHandshakeTime,
+		})
+	}
+	sort.Slice(result, func(i, j int) bool {
+		return result[i].DeviceID < result[j].DeviceID
+	})
+	return result, nil
 }
 
 func (a *Agent) pruneBackups() {

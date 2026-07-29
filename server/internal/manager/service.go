@@ -488,10 +488,13 @@ func (s *Service) ClientUsage(
 	if _, _, err := s.store.DeviceRegion(ctx, deviceID, code); err != nil {
 		return nil, "", err
 	}
-	// The legacy Singapore collector remains the authoritative source during
-	// migration. Regional collectors write the same contract as nodes go live.
+	// The legacy Singapore collector remains authoritative until the Singapore
+	// node agent is migrated. Every additional region uses node reports.
 	if code != "SG" {
-		return []model.UsagePoint{}, bucket, nil
+		points, err := s.store.RegionalUsage(
+			ctx, deviceID, code, bucket, from, now.Add(time.Hour),
+		)
+		return points, bucket, err
 	}
 	points, err := s.store.Usage(ctx, deviceID, bucket, from, now.Add(time.Hour))
 	if err != nil {
@@ -1343,6 +1346,14 @@ func addressAt(network string, slot int) (string, error) {
 	prefix, err := netip.ParsePrefix(strings.TrimSpace(network))
 	if err != nil || slot < 1 {
 		return "", fmt.Errorf("invalid region network %q", network)
+	}
+	if prefix.Addr().Is6() {
+		base := prefix.Masked().Addr().String()
+		candidate, parseErr := netip.ParseAddr(base + strconv.Itoa(slot))
+		if parseErr != nil || !prefix.Contains(candidate) {
+			return "", fmt.Errorf("region network %q does not contain slot %d", network, slot)
+		}
+		return candidate.String(), nil
 	}
 	address := prefix.Masked().Addr()
 	for index := 0; index < slot; index++ {

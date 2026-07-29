@@ -7,6 +7,7 @@ import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URI
 import java.net.URL
+import java.net.URLEncoder
 import java.security.KeyFactory
 import java.security.SecureRandom
 import java.security.Signature
@@ -160,6 +161,32 @@ class EnrollmentClient {
         )
     }
 
+    fun usage(
+        profile: MultiRegionProfile,
+        regionCode: String,
+        range: String
+    ): UsageSummary {
+        require(range in setOf("24h", "7d", "30d"))
+        val origin = URI(profile.managementUrl)
+        val region = URLEncoder.encode(regionCode, Charsets.UTF_8.name())
+        val response = requestJson(
+            URL("${origin.scheme}://${origin.host}/api/v2/client/usage" +
+                "?range=$range&region=$region"),
+            "GET", null, profile.deviceToken
+        )
+        val points = response.getJSONArray("points")
+        var upload = 0L
+        var download = 0L
+        for (index in 0 until points.length()) {
+            val point = points.getJSONObject(index)
+            upload += point.getLong("upload_bytes")
+            download += point.getLong("download_bytes")
+        }
+        return UsageSummary(
+            upload, download, response.optString("synced_at")
+        )
+    }
+
     private fun requestJson(
         url: URL,
         method: String,
@@ -220,5 +247,11 @@ class EnrollmentClient {
         val presharedKey: String
     )
 }
+
+data class UsageSummary(
+    val uploadBytes: Long,
+    val downloadBytes: Long,
+    val syncedAt: String
+)
 
 private fun JSONArray.strings() = (0 until length()).map(::getString)

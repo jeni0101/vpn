@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"crypto/subtle"
 	"crypto/sha256"
 	"database/sql"
 	"encoding/json"
@@ -438,11 +439,25 @@ func (s *Store) SaveNodeReport(ctx context.Context, report model.NodeReport) err
 	if report.NodeID == "" {
 		return errors.New("invalid node report")
 	}
+	txDB, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer txDB.Rollback()
+	var regionCode string
+	if err := txDB.QueryRowContext(
+		ctx, `SELECT region_code FROM nodes WHERE id=?`, report.NodeID,
+	).Scan(&regionCode); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrNotFound
+		}
+		return err
+	}
 	health := model.NodeHealthDegraded
 	if report.Healthy {
 		health = model.NodeHealthHealthy
 	}
-	_, err := s.db.ExecContext(ctx, `INSERT INTO node_reports(
+	_, err = txDB.ExecContext(ctx, `INSERT INTO node_reports(
 		node_id,version,healthy,peer_count,last_error,usage_sequence,reported_at
 	) VALUES(?,?,?,?,?,?,?)
 	ON CONFLICT(node_id) DO UPDATE SET
@@ -454,11 +469,158 @@ func (s *Store) SaveNodeReport(ctx context.Context, report model.NodeReport) err
 	if err != nil {
 		return err
 	}
-	_, err = s.db.ExecContext(ctx, `UPDATE nodes SET health=?,version=?,last_report_at=?,
+	_, err = txDB.ExecContext(ctx, `UPDATE nodes SET health=?,version=?,last_report_at=?,
 		updated_at=? WHERE id=?`, health, report.Version,
 		report.ReportedAt.UTC().Format(time.RFC3339Nano),
 		time.Now().UTC().Format(time.RFC3339Nano), report.NodeID)
-	return err
+	if err != nil {
+		return err
+	}
+	for _, counter := range report.Usage {
+		if counter.DeviceID == "" || counter.PublicKey == "" ||
+			counter.ReceiveBytes < 0 || counter.TransmitBytes < 0 {
+			return errors.New("invalid node usage counter")
+		}
+		var expectedKey string
+		err := txDB.QueryRowContext(ctx, `SELECT public_key
+			FROM device_region_credentials
+			WHERE device_id=? AND region_code=? AND status=?`,
+			counter.DeviceID, regionCode, model.RegionStatusActive,
+		).Scan(&expectedKey)
+		if errors.Is(err, sql.ErrNoRows) {
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		if subtle.ConstantTimeCompare(
+			[]byte(expectedKey), []byte(counter.PublicKey),
+		) != 1 {
+			return errors.New("node usage public key mismatch")
+		}
+		if err := recordRegionalStats(
+			ctx, txDB, report.NodeID, regionCode, counter, report.ReportedAt,
+		); err != nil {
+			return err
+		}
+	}
+	return txDB.Commit()
+}
+
+func recordRegionalStats(
+	ctx context.Context,
+	txDB *sql.Tx,
+	nodeID, regionCode string,
+	counter model.NodeUsageCounter,
+	now time.Time,
+) error {
+	var lastRX, lastTX int64
+	var exists bool
+	err := txDB.QueryRowContext(ctx, `SELECT last_rx,last_tx
+		FROM regional_usage_state WHERE node_id=? AND device_id=?`,
+		nodeID, counter.DeviceID,
+	).Scan(&lastRX, &lastTX)
+	if err == nil {
+		exists = true
+	} else if !errors.Is(err, sql.ErrNoRows) {
+		return err
+	}
+	uploadDelta, downloadDelta := int64(0), int64(0)
+	if exists {
+		if counter.ReceiveBytes >= lastRX {
+			uploadDelta = counter.ReceiveBytes - lastRX
+		} else {
+			uploadDelta = counter.ReceiveBytes
+		}
+		if counter.TransmitBytes >= lastTX {
+			downloadDelta = counter.TransmitBytes - lastTX
+		} else {
+			downloadDelta = counter.TransmitBytes
+		}
+	}
+	handshake := any(nil)
+	if !counter.LastHandshake.IsZero() {
+		handshake = counter.LastHandshake.UTC().Format(time.RFC3339Nano)
+	}
+	_, err = txDB.ExecContext(ctx, `INSERT INTO regional_usage_state(
+		node_id,device_id,region_code,last_rx,last_tx,total_upload,total_download,
+		last_handshake,updated_at
+	) VALUES(?,?,?,?,?,?,?,?,?)
+	ON CONFLICT(node_id,device_id) DO UPDATE SET
+		region_code=excluded.region_code,last_rx=excluded.last_rx,last_tx=excluded.last_tx,
+		total_upload=regional_usage_state.total_upload+?,
+		total_download=regional_usage_state.total_download+?,
+		last_handshake=COALESCE(excluded.last_handshake,regional_usage_state.last_handshake),
+		updated_at=excluded.updated_at`,
+		nodeID, counter.DeviceID, regionCode,
+		counter.ReceiveBytes, counter.TransmitBytes, uploadDelta, downloadDelta,
+		handshake, now.UTC().Format(time.RFC3339Nano),
+		uploadDelta, downloadDelta,
+	)
+	if err != nil || !exists || (uploadDelta == 0 && downloadDelta == 0) {
+		return err
+	}
+	for kind, bucket := range map[string]time.Time{
+		"hour": now.UTC().Truncate(time.Hour),
+		"day": time.Date(
+			now.UTC().Year(), now.UTC().Month(), now.UTC().Day(),
+			0, 0, 0, 0, time.UTC,
+		),
+		"month": time.Date(
+			now.UTC().Year(), now.UTC().Month(), 1,
+			0, 0, 0, 0, time.UTC,
+		),
+	} {
+		_, err = txDB.ExecContext(ctx, `INSERT INTO regional_usage(
+			device_id,region_code,node_id,bucket_kind,bucket,upload,download
+		) VALUES(?,?,?,?,?,?,?)
+		ON CONFLICT(device_id,region_code,node_id,bucket_kind,bucket) DO UPDATE SET
+			upload=upload+excluded.upload,download=download+excluded.download`,
+			counter.DeviceID, regionCode, nodeID, kind,
+			bucket.Format(time.RFC3339), uploadDelta, downloadDelta,
+		)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *Store) RegionalUsage(
+	ctx context.Context,
+	deviceID, regionCode, bucket string,
+	from, to time.Time,
+) ([]model.UsagePoint, error) {
+	if bucket != "hour" && bucket != "day" && bucket != "month" {
+		return nil, errors.New("invalid usage bucket")
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT
+		device_id,region_code,node_id,bucket,upload,download
+		FROM regional_usage
+		WHERE device_id=? AND region_code=? AND bucket_kind=?
+		  AND bucket>=? AND bucket<?
+		ORDER BY bucket,node_id`,
+		deviceID, regionCode, bucket,
+		from.UTC().Format(time.RFC3339), to.UTC().Format(time.RFC3339),
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	points := make([]model.UsagePoint, 0)
+	for rows.Next() {
+		var point model.UsagePoint
+		var bucketValue string
+		if err := rows.Scan(
+			&point.DeviceID, &point.RegionCode, &point.NodeID, &bucketValue,
+			&point.UploadBytes, &point.DownloadBytes,
+		); err != nil {
+			return nil, err
+		}
+		point.Bucket, _ = time.Parse(time.RFC3339, bucketValue)
+		points = append(points, point)
+	}
+	return points, rows.Err()
 }
 
 func nullableTime(value *time.Time) any {

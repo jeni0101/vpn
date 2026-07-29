@@ -45,7 +45,11 @@ public partial class MainWindow : Window
 
     private async void SyncProfileOnLoad(object sender, RoutedEventArgs e)
     {
-        if (profile is null || IsServiceRunning()) return;
+        if (profile is null) return;
+        if (IsServiceRunning()) {
+            await RefreshHistoryAsync();
+            return;
+        }
         try {
             var selected = (RegionBox.SelectedItem as RegionChoice)?.Code;
             profile = await new EnrollmentClient(http).SyncProfileAsync(
@@ -58,8 +62,10 @@ public partial class MainWindow : Window
             }
             PrepareSelectedRegion();
             DetailText.Text = "地区和节点清单已同步";
+            await RefreshHistoryAsync();
         } catch (Exception ex) {
             DetailText.Text = $"使用已验签缓存 · 上次同步失败：{ex.Message}";
+            await RefreshHistoryAsync();
         }
     }
 
@@ -88,6 +94,7 @@ public partial class MainWindow : Window
                 store.SaveProfile(profile);
                 LoadRegions(profile);
                 PrepareSelectedRegion();
+                await RefreshHistoryAsync();
             } else {
                 profile = null;
                 var config = SafeWireGuardConfig.Parse(text);
@@ -119,13 +126,14 @@ public partial class MainWindow : Window
         LatencyButton.IsEnabled = choices.Length > 0 && !IsServiceRunning();
     }
 
-    private void RegionSelectionChanged(object sender, SelectionChangedEventArgs e)
+    private async void RegionSelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         if (profile is null || RegionBox.SelectedItem is not RegionChoice || IsServiceRunning())
             return;
         try {
             PrepareSelectedRegion();
             InstallService();
+            await RefreshHistoryAsync();
         } catch (Exception ex) {
             MessageBox.Show(ex.Message, "切换地区失败", MessageBoxButton.OK, MessageBoxImage.Error);
         }
@@ -182,7 +190,7 @@ public partial class MainWindow : Window
         })!.WaitForExit();
     }
 
-    private void ConnectClick(object sender, RoutedEventArgs e)
+    private async void ConnectClick(object sender, RoutedEventArgs e)
     {
         try {
             using var service = new ServiceController(ServiceName);
@@ -193,6 +201,7 @@ public partial class MainWindow : Window
                 ConnectButton.Content = "连接";
                 RegionBox.IsEnabled = profile is not null;
                 LatencyButton.IsEnabled = profile is not null;
+                await RefreshHistoryAsync();
             } else {
                 PrepareSelectedRegion();
                 store.MaterializeForService();
@@ -227,9 +236,29 @@ public partial class MainWindow : Window
         var stats = adapter.GetIPStatistics();
         var totals = ledger.Update(stats.BytesReceived, stats.BytesSent, DateTimeOffset.Now);
         UsageText.Text = $"当前　下载 {Format(totals.SessionDownload)}　上传 {Format(totals.SessionUpload)}";
-        HistoryUsageText.Text =
+        LocalUsageText.Text =
             $"今日 ↓{Format(totals.TodayDownload)} / ↑{Format(totals.TodayUpload)}　" +
             $"本月 ↓{Format(totals.MonthDownload)} / ↑{Format(totals.MonthUpload)}";
+    }
+
+    private async Task RefreshHistoryAsync()
+    {
+        if (profile is null || RegionBox.SelectedItem is not RegionChoice choice)
+            return;
+        try {
+            HistoryUsageText.Text = "正在同步服务器历史用量…";
+            var client = new EnrollmentClient(http);
+            var values = await Task.WhenAll(
+                client.FetchUsageAsync(profile, choice.Code, "24h", CancellationToken.None),
+                client.FetchUsageAsync(profile, choice.Code, "7d", CancellationToken.None),
+                client.FetchUsageAsync(profile, choice.Code, "30d", CancellationToken.None));
+            HistoryUsageText.Text =
+                $"服务器历史　24 小时 ↓{Format(values[0].DownloadBytes)} / ↑{Format(values[0].UploadBytes)}　" +
+                $"7 天 ↓{Format(values[1].DownloadBytes)} / ↑{Format(values[1].UploadBytes)}　" +
+                $"30 天 ↓{Format(values[2].DownloadBytes)} / ↑{Format(values[2].UploadBytes)}";
+        } catch {
+            HistoryUsageText.Text = "服务器历史暂不可用；当前会话和本机累计仍可查看";
+        }
     }
 
     private static string Format(long value) => value switch {

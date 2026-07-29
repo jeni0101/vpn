@@ -145,6 +145,37 @@ public sealed class EnrollmentClient(HttpClient http)
         return profile with { Catalog = catalog, Regions = secrets };
     }
 
+    public async Task<UsageSummary> FetchUsageAsync(
+        MultiRegionProfile profile,
+        string regionCode,
+        string range,
+        CancellationToken cancellation)
+    {
+        if (range is not ("24h" or "7d" or "30d"))
+            throw new ArgumentOutOfRangeException(nameof(range));
+        var path = $"/api/v2/client/usage?range={range}&region=" +
+            Uri.EscapeDataString(regionCode);
+        using var request = new HttpRequestMessage(
+            HttpMethod.Get, new Uri(profile.ManagementUrl, path));
+        request.Headers.Authorization =
+            new System.Net.Http.Headers.AuthenticationHeaderValue(
+                "Bearer", profile.DeviceToken);
+        using var response = await http.SendAsync(request, cancellation);
+        response.EnsureSuccessStatusCode();
+        using var document = JsonDocument.Parse(
+            await response.Content.ReadAsStreamAsync(cancellation));
+        long upload = 0;
+        long download = 0;
+        foreach (var point in document.RootElement.GetProperty("points").EnumerateArray()) {
+            upload += point.GetProperty("upload_bytes").GetInt64();
+            download += point.GetProperty("download_bytes").GetInt64();
+        }
+        var syncedAt = document.RootElement.TryGetProperty("synced_at", out var value)
+            ? value.GetDateTimeOffset()
+            : DateTimeOffset.UtcNow;
+        return new UsageSummary(upload, download, syncedAt);
+    }
+
     public static void VerifyCatalog(SignedCatalog catalog, string encodedPublicKey)
     {
         byte[] publicBytes;
@@ -229,3 +260,8 @@ public sealed class EnrollmentClient(HttpClient http)
     private sealed record EnrollRegionResponse(
         [property: JsonPropertyName("configuration")] RegionConfiguration Configuration);
 }
+
+public sealed record UsageSummary(
+    long UploadBytes,
+    long DownloadBytes,
+    DateTimeOffset SyncedAt);

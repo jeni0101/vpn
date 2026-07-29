@@ -151,6 +151,15 @@ type NodeReport struct {
 	LastError     string    `json:"last_error,omitempty"`
 	ReportedAt    time.Time `json:"reported_at"`
 	UsageSequence int64     `json:"usage_sequence"`
+	Usage         []NodeUsageCounter `json:"usage,omitempty"`
+}
+
+type NodeUsageCounter struct {
+	DeviceID     string    `json:"device_id"`
+	PublicKey    string    `json:"public_key"`
+	ReceiveBytes int64     `json:"receive_bytes"`
+	TransmitBytes int64    `json:"transmit_bytes"`
+	LastHandshake time.Time `json:"last_handshake,omitempty"`
 }
 
 type Enrollment struct {
