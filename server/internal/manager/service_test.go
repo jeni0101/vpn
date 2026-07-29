@@ -126,8 +126,8 @@ func TestV2RegionsDesiredStateAndAppleBundle(t *testing.T) {
 	sgServer, _ := wgtypes.GeneratePrivateKey()
 	myServer, _ := wgtypes.GeneratePrivateKey()
 	cfg := config.Manager{
-		ManagementURL:  "https://vpn.example.com",
-		Endpoint:       "203.0.113.10:53147",
+		ManagementURL:   "https://vpn.example.com",
+		Endpoint:        "203.0.113.10:53147",
 		ServerPublicKey: sgServer.PublicKey().String(),
 		InviteTTL:       10 * time.Minute,
 		Quarantine:      7 * 24 * time.Hour,
@@ -220,7 +220,7 @@ func TestV2RegionsDesiredStateAndAppleBundle(t *testing.T) {
 	for index, counters := range [][2]int64{{100, 200}, {160, 290}} {
 		if err := service.SaveNodeReport(ctx, model.NodeReport{
 			NodeID: "my-kul-01", Version: "1", Healthy: true, PeerCount: 1,
-			ReportedAt: now.Add(time.Duration(index) * 5 * time.Minute),
+			ReportedAt:    now.Add(time.Duration(index) * 5 * time.Minute),
 			UsageSequence: int64(index + 1),
 			Usage: []model.NodeUsageCounter{{
 				DeviceID: result.Device.ID, PublicKey: myClient.PublicKey().String(),

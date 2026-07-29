@@ -144,20 +144,20 @@ type CatalogNode struct {
 }
 
 type NodeReport struct {
-	NodeID        string    `json:"node_id"`
-	Version       string    `json:"version"`
-	Healthy       bool      `json:"healthy"`
-	PeerCount     int       `json:"peer_count"`
-	LastError     string    `json:"last_error,omitempty"`
-	ReportedAt    time.Time `json:"reported_at"`
-	UsageSequence int64     `json:"usage_sequence"`
+	NodeID        string             `json:"node_id"`
+	Version       string             `json:"version"`
+	Healthy       bool               `json:"healthy"`
+	PeerCount     int                `json:"peer_count"`
+	LastError     string             `json:"last_error,omitempty"`
+	ReportedAt    time.Time          `json:"reported_at"`
+	UsageSequence int64              `json:"usage_sequence"`
 	Usage         []NodeUsageCounter `json:"usage,omitempty"`
 }
 
 type NodeUsageCounter struct {
-	DeviceID     string    `json:"device_id"`
-	PublicKey    string    `json:"public_key"`
-	ReceiveBytes int64     `json:"receive_bytes"`
+	DeviceID      string    `json:"device_id"`
+	PublicKey     string    `json:"public_key"`
+	ReceiveBytes  int64     `json:"receive_bytes"`
 	TransmitBytes int64    `json:"transmit_bytes"`
 	LastHandshake time.Time `json:"last_handshake,omitempty"`
 }

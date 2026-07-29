@@ -2,8 +2,8 @@ package store
 
 import (
 	"context"
-	"crypto/subtle"
 	"crypto/sha256"
+	"crypto/subtle"
 	"database/sql"
 	"encoding/json"
 	"errors"

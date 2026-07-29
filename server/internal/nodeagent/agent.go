@@ -38,13 +38,13 @@ type Config struct {
 }
 
 type Agent struct {
-	cfg         Config
-	client      *http.Client
-	logger      *log.Logger
-	token       string
-	lastVersion int64
+	cfg            Config
+	client         *http.Client
+	logger         *log.Logger
+	token          string
+	lastVersion    int64
 	reportSequence int64
-	peerDeviceIDs map[string]string
+	peerDeviceIDs  map[string]string
 }
 
 func New(cfg Config, logger *log.Logger) (*Agent, error) {
@@ -75,7 +75,7 @@ func New(cfg Config, logger *log.Logger) (*Agent, error) {
 	}
 	return &Agent{
 		cfg: cfg, logger: logger, token: tokenValue,
-		client: &http.Client{Transport: transport, Timeout: 20 * time.Second},
+		client:        &http.Client{Transport: transport, Timeout: 20 * time.Second},
 		peerDeviceIDs: make(map[string]string),
 	}, nil
 }
@@ -283,7 +283,7 @@ func (a *Agent) report(ctx context.Context, healthy bool, peers int, lastError s
 	report := model.NodeReport{
 		NodeID: a.cfg.NodeID, Version: fmt.Sprintf("%d", a.lastVersion),
 		Healthy: healthy, PeerCount: peers, LastError: lastError,
-		ReportedAt: time.Now().UTC(),
+		ReportedAt:    time.Now().UTC(),
 		UsageSequence: a.reportSequence, Usage: usage,
 	}
 	data, err := json.Marshal(report)
