@@ -167,8 +167,9 @@ class MainActivity : ComponentActivity() {
                 .onFailure { message = it.message ?: "导入失败" }
             pendingDocumentUri = null
         }
-        LaunchedEffect(Unit) {
-            activeProfile?.let { cached ->
+        LaunchedEffect(activeProfile?.deviceToken) {
+            val cached = activeProfile
+            if (cached != null) {
                 runCatching {
                     val synced = withContext(Dispatchers.IO) {
                         EnrollmentClient().sync(cached)
@@ -317,7 +318,7 @@ class MainActivity : ComponentActivity() {
                 }) { Text("导入配置") }
                 Button(onClick = {
                     scanner.launch(
-                        ScanOptions().setPrompt("扫描 TNest VPN 注册二维码")
+                        ScanOptions().setPrompt("扫描 TNest VPN 或 WireGuard 配置二维码")
                             .setBeepEnabled(false).setOrientationLocked(false)
                     )
                 }) { Text("扫描二维码") }
