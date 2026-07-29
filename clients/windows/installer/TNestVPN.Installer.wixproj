@@ -1,0 +1,6 @@
+<Project Sdk="WixToolset.Sdk/4.0.5">
+  <PropertyGroup>
+    <Platform>x64</Platform>
+    <DefineConstants>PublishDir=$(MSBuildProjectDirectory)\..\artifacts\publish</DefineConstants>
+  </PropertyGroup>
+</Project>

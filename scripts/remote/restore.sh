@@ -79,6 +79,38 @@ systemctl restart personal-vpn-firewall.service
 systemctl enable --now "wg-quick@${VPN_INTERFACE}.service"
 systemctl restart "wg-quick@${VPN_INTERFACE}.service"
 
+if [[ -d "${STAGE_ROOT}/etc/personal-vpn" ]]; then
+    systemctl stop personal-vpn-web personal-vpn-managerd 2>/dev/null || true
+    install -d -m 0750 /etc/personal-vpn /etc/personal-vpn-web
+    install -d -m 0700 /var/lib/personal-vpn /var/lib/personal-vpn-web
+    cp -a "${STAGE_ROOT}/etc/personal-vpn/." /etc/personal-vpn/
+    cp -a "${STAGE_ROOT}/etc/personal-vpn-web/." /etc/personal-vpn-web/
+    cp -a "${STAGE_ROOT}/var/lib/personal-vpn/." /var/lib/personal-vpn/
+    cp -a "${STAGE_ROOT}/var/lib/personal-vpn-web/." /var/lib/personal-vpn-web/
+    for path in \
+        etc/systemd/system/personal-vpn-managerd.service \
+        etc/systemd/system/personal-vpn-web.service \
+        usr/local/bin/personal-vpn-managerd \
+        usr/local/bin/personal-vpn-managerctl \
+        usr/local/bin/personal-vpn-web; do
+        [[ -f "${STAGE_ROOT}/${path}" ]] &&
+            install -D -m "$([[ "${path}" == usr/local/bin/* ]] && printf 0755 || printf 0644)" \
+                "${STAGE_ROOT}/${path}" "/${path}"
+    done
+    if [[ -f "${STAGE_ROOT}/etc/nginx/sites-available/vpn.example.com" ]]; then
+        install -m 0644 "${STAGE_ROOT}/etc/nginx/sites-available/vpn.example.com" \
+            /etc/nginx/sites-available/vpn.example.com
+        ln -sfn /etc/nginx/sites-available/vpn.example.com \
+            /etc/nginx/sites-enabled/vpn.example.com
+        nginx -t
+        systemctl reload nginx
+    fi
+    chown -R root:root /var/lib/personal-vpn /etc/personal-vpn
+    chown -R tnest-vpn-web:tnest-vpn-web /var/lib/personal-vpn-web
+    systemctl daemon-reload
+    systemctl enable --now personal-vpn-managerd personal-vpn-web
+fi
+
 printf 'ROLLBACK_UNIT=%s\n' "${ROLLBACK_UNIT}"
 printf 'BACKUP_DIR=%s\n' "${BACKUP_DIR}"
 printf 'SERVER_PUBLIC_KEY=%s\n' "$(wg pubkey </etc/wireguard/wg0.key)"

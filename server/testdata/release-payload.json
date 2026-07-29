@@ -1,0 +1,13 @@
+{
+  "generated_at": "2026-07-29T00:00:00Z",
+  "releases": [
+    {
+      "platform": "android",
+      "version": "0.1.0",
+      "package_id": "asia.tnestai.vpn",
+      "url": "https://vpn.example.com/releases/tnest-vpn-0.1.0.apk",
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+      "allow_downgrade": false
+    }
+  ]
+}

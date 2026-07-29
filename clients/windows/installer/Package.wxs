@@ -1,0 +1,20 @@
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Package Name="TNest VPN" Manufacturer="TNest AI" Version="0.1.0"
+           UpgradeCode="11CA584D-B0D5-449A-AB48-0240D6097610" Scope="perMachine">
+    <MajorUpgrade DowngradeErrorMessage="不允许安装旧版本 TNest VPN。" />
+    <MediaTemplate EmbedCab="yes" />
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="INSTALLFOLDER" Name="TNest VPN">
+        <Component Id="AppFiles" Guid="*">
+          <File Source="$(var.PublishDir)\TNestVPN.exe" />
+          <File Source="$(var.PublishDir)\TNestVPN.ServiceHost.exe" />
+          <File Source="$(var.PublishDir)\tunnel.dll" />
+          <File Source="$(var.PublishDir)\wireguard.dll" />
+        </Component>
+      </Directory>
+    </StandardDirectory>
+    <Feature Id="Main" Title="TNest VPN">
+      <ComponentRef Id="AppFiles" />
+    </Feature>
+  </Package>
+</Wix>

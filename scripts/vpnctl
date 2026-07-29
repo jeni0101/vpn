@@ -18,6 +18,8 @@ source "${SCRIPT_DIR}/lib/remote.sh"
 source "${SCRIPT_DIR}/lib/backup.sh"
 # shellcheck source=scripts/lib/peers.sh
 source "${SCRIPT_DIR}/lib/peers.sh"
+# shellcheck source=scripts/lib/web.sh
+source "${SCRIPT_DIR}/lib/web.sh"
 
 usage() {
     cat <<'EOF'
@@ -32,6 +34,12 @@ Usage:
   vpnctl server deploy
   vpnctl server bootstrap
   vpnctl server status
+
+  vpnctl web build
+  vpnctl web preflight
+  vpnctl web deploy
+  vpnctl web status
+  vpnctl web init-admin [username]
 
   vpnctl peer add <windows|macos|ios|android>
   vpnctl peer export <name> --file
@@ -102,6 +110,33 @@ main() {
                     server_status
                     ;;
                 *) die "Unknown server command: ${2:-}" ;;
+            esac
+            ;;
+        web)
+            case "${2:-}" in
+                build)
+                    require_arg_count 0 "${@:3}"
+                    web_build
+                    ;;
+                preflight)
+                    require_arg_count 0 "${@:3}"
+                    web_preflight
+                    ;;
+                deploy)
+                    require_arg_count 0 "${@:3}"
+                    web_deploy
+                    ;;
+                status)
+                    require_arg_count 0 "${@:3}"
+                    web_status
+                    ;;
+                init-admin)
+                    if (($# > 3)); then
+                        die "Unexpected arguments; run scripts/vpnctl --help"
+                    fi
+                    web_init_admin "${3:-admin}"
+                    ;;
+                *) die "Unknown web command: ${2:-}" ;;
             esac
             ;;
         peer)

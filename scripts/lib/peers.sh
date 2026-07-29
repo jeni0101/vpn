@@ -95,6 +95,7 @@ peer_add() {
     local resume_pending="no"
 
     load_config
+    web_assert_legacy_mutation_allowed
     assert_safe_peer_name "${name}"
     ensure_runtime_dirs
     [[ -f "${STATE_DIR}/server-public.key" ]] ||
@@ -243,6 +244,7 @@ peer_revoke() {
     [[ "${confirmation}" == "--yes" ]] ||
         die "Revocation is destructive; pass --yes"
     load_config
+    web_assert_legacy_mutation_allowed
     assert_safe_peer_name "${name}"
     active_meta="${STATE_DIR}/peers/${name}.meta"
     active_secret="${SECRETS_DIR}/peers/${name}"
@@ -274,6 +276,7 @@ peer_rotate_prepare() {
     local pending_secret
 
     load_config
+    web_assert_legacy_mutation_allowed
     assert_safe_peer_name "${name}"
     active_meta="${STATE_DIR}/peers/${name}.meta"
     pending_meta="${STATE_DIR}/pending/${name}.meta"
@@ -304,6 +307,7 @@ peer_rotate_activate() {
     [[ "${confirmation}" == "--yes" ]] ||
         die "Rotation activation invalidates the old config; pass --yes"
     load_config
+    web_assert_legacy_mutation_allowed
     assert_safe_peer_name "${name}"
     active_meta="${STATE_DIR}/peers/${name}.meta"
     active_secret="${SECRETS_DIR}/peers/${name}"

@@ -1,6 +1,6 @@
 # 个人自用 WireGuard VPN
 
-这是一个在本机管理、部署到新加坡 Ubuntu 24.04 LTS 云服务器的双栈 WireGuard VPN。Windows、macOS、iOS、Android 使用官方 WireGuard 客户端，IPv4 和 IPv6 流量均从新加坡服务器出口。
+这是一个在本机管理、部署到新加坡 Ubuntu 24.04 LTS 云服务器的双栈 WireGuard VPN。项目同时包含 TNest VPN Web 管理后台、Windows x64 客户端和 Android 8+ 客户端；iOS/macOS 继续使用官方 WireGuard。
 
 ## 已实现
 
@@ -17,8 +17,10 @@
 - 自动创建并导出四端 peer，重复 bootstrap 不轮换已有密钥。
 - 兼容标准 Docker `iptables-nft` 布局，只在 `DOCKER-USER` 加入带项目标记的 `wg0` 规则。
 - Bash、ShellCheck、Bats、备份流和双栈 network namespace 集成测试。
-
-项目不会自行实现 VPN 协议，也不会部署公网 Web 管理面。
+- root 权限 `personal-vpn-managerd` 只通过 Unix Socket 暴露固定管理操作。
+- 低权限 `personal-vpn-web`、Argon2id 密码、TOTP、恢复码、CSRF/CSP 和审计日志。
+- 动态地址池 `.14～.254`、7 天地址隔离、一次性注册/标准配置和流量统计。
+- Windows WPF 与 Android Compose 客户端均复用 WireGuard 官方嵌入方案，不自行实现协议。
 
 ## 快速开始
 
@@ -34,6 +36,16 @@ scripts/vpnctl server bootstrap
 
 `bootstrap` 部署服务器、验证网站、创建四端 peer，并把四份 `0600` 配置写到 `exports/`。自动生成的 age identity 必须另存到离线安全位置，它不会进入由自身加密的备份。
 
+原有四端稳定后，为 `vpn.example.com` 配置 A/AAAA，再部署管理面：
+
+```bash
+scripts/vpnctl web preflight
+scripts/vpnctl web deploy
+scripts/vpnctl web init-admin
+```
+
+部署先以只读模式导入并逐项核对现有 peer；公钥、PSK 或 AllowedIPs 任一不一致都会停止，不会重建现有客户端密钥。
+
 完整部署步骤见 [docs/deployment.md](./docs/deployment.md)，四端设置见 [docs/clients.md](./docs/clients.md)。
 
 ## 常用命令
@@ -46,6 +58,7 @@ scripts/vpnctl peer rotate prepare ios
 scripts/vpnctl peer rotate activate ios --yes
 scripts/vpnctl peer revoke ios --yes
 scripts/vpnctl backup create
+scripts/vpnctl web status
 ```
 
 所有会改变 peer 的操作都会先创建加密备份。撤销、轮换激活和恢复必须显式传入 `--yes`。
@@ -65,6 +78,8 @@ scripts/vpnctl lab test
 - VPN 备份只包含 peer 秘密，不包含 age identity、GitHub deploy key 或其他无关凭据。
 - 不删除或重写 Docker 的 NAT/转发规则；未知容器或防火墙布局仍会阻止部署。
 - 客户端私钥只在本机生成；服务端私钥只在服务器生成。
+- Web 一次性配置只保留到首次下载或 10 分钟；注册 Token 仅保存 SHA-256。
+- manager 每次变更前生成 age 加密的 `wg0.conf` 快照，完整备份会短暂停止控制面以取得一致的 SQLite 文件。
 - 二维码等同于客户端密码，只在终端临时显示。
 - VPN 保护设备到新加坡服务器之间的流量；服务器之后仍应使用 HTTPS。
 - 使用前必须确认云服务商条款及适用法律。
@@ -76,5 +91,9 @@ scripts/vpnctl lab test
 - [docs/clients.md](./docs/clients.md)：四端接入和泄漏测试
 - [docs/operations.md](./docs/operations.md)：日常运维和 peer 管理
 - [docs/recovery.md](./docs/recovery.md)：备份、恢复和故障处理
+- [docs/web-admin.md](./docs/web-admin.md)：Web 管理面部署和迁移
+- [docs/windows-client.md](./docs/windows-client.md)：Windows 客户端构建与使用
+- [docs/android-client.md](./docs/android-client.md)：Android 客户端构建与使用
+- [docs/releases.md](./docs/releases.md)：离线签名与更新清单
 
 WireGuard 四端客户端下载以[官方安装页](https://www.wireguard.com/install/)为准。

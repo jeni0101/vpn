@@ -34,15 +34,7 @@ backup_create() {
     fi
 
     ssh_args
-    if ! ssh "${SSH_ARGS[@]}" "$(remote_target)" \
-        "sudo -n tar -C / -czf - \
-            etc/wireguard/wg0.key \
-            etc/wireguard/wg0.conf \
-            etc/nftables.d/personal-vpn.nft \
-            etc/sysctl.d/70-personal-vpn.conf \
-            etc/systemd/system/personal-vpn-firewall.service \
-            usr/local/sbin/personal-vpn-firewall \
-            usr/local/sbin/personal-vpn-rollback" |
+    if ! remote_sudo_script "${ROOT_DIR}/scripts/remote/backup-stream.sh" |
         age -r "${AGE_RECIPIENT}" -o "${server_archive}"; then
         rm -f "${local_archive}" "${server_archive}"
         rmdir "${destination}" 2>/dev/null || true

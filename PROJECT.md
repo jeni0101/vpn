@@ -15,6 +15,16 @@ Android  10.66.0.13 / fd66:66:66::13 ─┘                │
                                                        └─ NAT66
 ```
 
+Web 控制面由两个 Go 服务组成：
+
+```text
+Nginx :443 ─> personal-vpn-web (tnest-vpn-web, 127.0.0.1:8787)
+                         │
+                         └─ Unix Socket ─> personal-vpn-managerd (root) ─> wg0
+```
+
+managerd 不提供任意命令接口，只接受固定的设备、注册、统计和审计操作。动态设备使用 `.14～.254`；`.2～.9` 保留，`.10～.13` 保留现有四端。
+
 服务端地址是 `10.66.0.1/24` 和 `fd66:66:66::1/64`。客户端使用 `0.0.0.0/0, ::/0` 全局路由、双栈公共 DNS、MTU 1420 和 25 秒 keepalive。
 
 服务端每个 peer 的 `AllowedIPs` 只包含该设备的 IPv4 `/32` 和 IPv6 `/128`。nftables 明确拒绝 `wg0 -> wg0`，阻止设备互访。
@@ -47,6 +57,12 @@ vpnctl server preflight
 vpnctl server deploy
 vpnctl server bootstrap
 vpnctl server status
+
+vpnctl web build
+vpnctl web preflight
+vpnctl web deploy
+vpnctl web status
+vpnctl web init-admin [username]
 
 vpnctl peer add <windows|macos|ios|android>
 vpnctl peer export <name> --file
@@ -139,5 +155,8 @@ backups/<timestamp>/
 - `tests/unit.bats`：地址映射、公网地址、名称校验、CLI 及双栈配置渲染。
 - 配置、远端预检、部署后验证和真实 age 备份流的成功/失败测试。
 - `tests/lab.sh`：真实 Linux network namespace、Docker 风格双栈 `FORWARD DROP`/`DOCKER-USER`、WireGuard、NAT44、NAT66、网站端口、隔离、幂等加载和撤销。
+- `server/internal/*_test.go`：地址池、隔离期、一次性注册、轮换、认证、统计和安全配置解析。
+- Windows xUnit：安全字段白名单、命令字段拒绝与双栈 `/0`。
+- Android JUnit/lint：安全配置解析、命令字段拒绝、SDK 36 和官方 tunnel 集成。
 
 云端和四端的人工验收步骤见 [docs/clients.md](./docs/clients.md)。

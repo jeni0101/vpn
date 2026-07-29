@@ -1,0 +1,28 @@
+[Unit]
+Description=TNest VPN web management service
+After=network-online.target personal-vpn-managerd.service
+Wants=network-online.target
+Requires=personal-vpn-managerd.service
+
+[Service]
+Type=simple
+User=tnest-vpn-web
+Group=tnest-vpn-web
+UMask=0077
+EnvironmentFile=/etc/personal-vpn-web/web.env
+ExecStart=/usr/local/bin/personal-vpn-web serve
+Restart=on-failure
+RestartSec=3s
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/personal-vpn-web
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictNamespaces=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+
+[Install]
+WantedBy=multi-user.target

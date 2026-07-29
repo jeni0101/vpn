@@ -22,7 +22,27 @@ exports/
 
 # Test and editor artifacts
 .cache/
+node_modules/
+__pycache__/
+*.pyc
+web/dist/
+web/*.tsbuildinfo
+web/vite.config.js
+web/vite.config.d.ts
+dist/
+bin/
+obj/
+.gradle/
+**/build/
+*.apk
+*.aab
+*.msi
+*.msix
+*.pfx
+*.p12
+*.jks
+*.keystore
+release-manifest.private.json
 tmp/
 *.swp
 *.tmp
-

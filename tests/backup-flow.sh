@@ -8,7 +8,9 @@ MOCK_BIN="${TEST_ROOT}/bin"
 MOCK_SERVER_ROOT="${TEST_ROOT}/server"
 trap 'rm -rf "${TEST_ROOT}"' EXIT
 
-mkdir -p "${TEST_ROOT}/config" "${MOCK_BIN}"
+mkdir -p "${TEST_ROOT}/config" "${TEST_ROOT}/scripts/remote" "${MOCK_BIN}"
+cp "${SOURCE_ROOT}/scripts/remote/backup-stream.sh" \
+    "${TEST_ROOT}/scripts/remote/backup-stream.sh"
 printf 'test-only ssh identity\n' >"${TEST_ROOT}/ssh.key"
 chmod 0600 "${TEST_ROOT}/ssh.key"
 

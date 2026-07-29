@@ -1,0 +1,29 @@
+[Unit]
+Description=TNest VPN privileged WireGuard manager
+After=network-online.target wg-quick@wg0.service
+Wants=network-online.target
+Requires=wg-quick@wg0.service
+
+[Service]
+Type=simple
+User=root
+Group=tnest-vpn-web
+UMask=0007
+EnvironmentFile=/etc/personal-vpn/manager.env
+ExecStart=/usr/local/bin/personal-vpn-managerd
+Restart=on-failure
+RestartSec=3s
+RuntimeDirectory=personal-vpn
+RuntimeDirectoryMode=0750
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/etc/wireguard /etc/personal-vpn /var/lib/personal-vpn /run/personal-vpn
+RestrictAddressFamilies=AF_UNIX AF_NETLINK
+RestrictNamespaces=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+
+[Install]
+WantedBy=multi-user.target
