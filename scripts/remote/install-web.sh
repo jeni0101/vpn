@@ -19,7 +19,8 @@ done
 
 export DEBIAN_FRONTEND=noninteractive
 apt-get update
-apt-get install -y --no-install-recommends nginx certbot python3-certbot-nginx ca-certificates
+apt-get install -y --no-install-recommends \
+    nginx certbot python3-certbot-nginx ca-certificates openssl
 
 getent group tnest-vpn-web >/dev/null ||
     groupadd --system tnest-vpn-web
@@ -32,6 +33,34 @@ install -d -m 0750 -o root -g tnest-vpn-web /etc/personal-vpn-web
 install -d -m 0700 -o root -g root /var/lib/personal-vpn
 install -d -m 0700 -o tnest-vpn-web -g tnest-vpn-web /var/lib/personal-vpn-web
 install -d -m 0700 -o root -g root /var/lib/personal-vpn/prechange
+
+if [[ ! -f /etc/personal-vpn-web/node-ca.key ||
+      ! -f /etc/personal-vpn-web/node-ca.crt ]]; then
+    umask 077
+    openssl genpkey -algorithm ED25519 \
+        -out /etc/personal-vpn-web/node-ca.key
+    openssl req -new -x509 \
+        -key /etc/personal-vpn-web/node-ca.key \
+        -out /etc/personal-vpn-web/node-ca.crt \
+        -days 3650 -subj '/CN=TNest VPN Node CA'
+fi
+if [[ ! -f /etc/personal-vpn-web/node-api.token ]]; then
+    umask 077
+    openssl rand -base64 48 | tr -d '\n' \
+        >/etc/personal-vpn-web/node-api.token
+fi
+chown root:root \
+    /etc/personal-vpn-web/node-ca.key \
+    /etc/personal-vpn-web/node-ca.crt
+chmod 0600 /etc/personal-vpn-web/node-ca.key
+chmod 0644 /etc/personal-vpn-web/node-ca.crt
+chown root:tnest-vpn-web /etc/personal-vpn-web/node-api.token
+chmod 0640 /etc/personal-vpn-web/node-api.token
+node_api_token="$(</etc/personal-vpn-web/node-api.token)"
+[[ "${#node_api_token}" -ge 32 ]] || {
+    printf 'invalid node API token\n' >&2
+    exit 1
+}
 
 install -m 0755 "${STAGE}/personal-vpn-managerd" /usr/local/bin/
 install -m 0755 "${STAGE}/personal-vpn-managerctl" /usr/local/bin/
@@ -60,20 +89,27 @@ TNEST_WG_CONFIG=/etc/wireguard/wg0.conf
 TNEST_WG_INTERFACE=wg0
 TNEST_MANAGEMENT_URL=https://${DOMAIN}
 TNEST_WG_ENDPOINT=${ENDPOINT}
+TNEST_CATALOG_SIGNING_KEY=/etc/personal-vpn/catalog-signing.key
+TNEST_REGION_CODE=SG
+TNEST_NODE_ID=sg-sin-01
+TNEST_NODE_PROBE_URL=https://${DOMAIN}/latency
+TNEST_EXIT_MODE=dual_stack
 TNEST_APPLY_CHANGES=${APPLY_CHANGES}
 TNEST_AGE_RECIPIENT=${AGE_RECIPIENT}
 TNEST_POLL_INTERVAL=30s
 EOF
 chmod 0600 /etc/personal-vpn/manager.env
 
-cat >/etc/personal-vpn-web/web.env <<'EOF'
+cat >/etc/personal-vpn-web/web.env <<EOF
 TNEST_WEB_LISTEN=127.0.0.1:8787
 TNEST_MANAGER_SOCKET=/run/personal-vpn/manager.sock
 TNEST_AUTH_DB=/var/lib/personal-vpn-web/auth.db
 TNEST_AUTH_KEY=/etc/personal-vpn-web/auth.key
 TNEST_RELEASES_FILE=/var/lib/personal-vpn-web/releases.json
+TNEST_NODE_API_TOKEN=${node_api_token}
 TNEST_SECURE_COOKIES=true
 EOF
+node_api_token=""
 chown root:tnest-vpn-web /etc/personal-vpn-web/web.env
 chmod 0640 /etc/personal-vpn-web/web.env
 
