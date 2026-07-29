@@ -36,5 +36,5 @@ if ipaddress.ip_address(expected6).compressed not in v6:
     raise SystemExit(f"{domain} AAAA does not resolve to {expected6}")
 PY
 
-nginx -T >/dev/null
+sudo -n nginx -T >/dev/null
 printf 'WEB_PREFLIGHT=ok\n'

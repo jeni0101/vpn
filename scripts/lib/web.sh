@@ -8,7 +8,18 @@ WEB_DIST_DIR="${ROOT_DIR}/dist/control-plane"
 web_build() (
     local go_bin="${GO:-go}"
 
-    require_command npm "${go_bin}"
+    require_command npm
+    if ! command -v "${go_bin}" >/dev/null 2>&1; then
+        if [[ -x "${WEB_DIST_DIR}/personal-vpn-managerd" &&
+              -x "${WEB_DIST_DIR}/personal-vpn-managerctl" &&
+              -x "${WEB_DIST_DIR}/personal-vpn-web" &&
+              -f "${WEB_DIST_DIR}/SHA256SUMS" ]] &&
+            sha256sum --quiet --check "${WEB_DIST_DIR}/SHA256SUMS"; then
+            log "Go toolchain is unavailable; reusing verified control-plane binaries in ${WEB_DIST_DIR}"
+            return
+        fi
+        die "Required command not found: ${go_bin}; no verified control-plane build is available"
+    fi
     rm -rf "${WEB_DIST_DIR}"
     mkdir -p "${WEB_DIST_DIR}"
     (

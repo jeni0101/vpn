@@ -76,13 +76,15 @@ chown root:tnest-vpn-web /etc/personal-vpn-web/web.env
 chmod 0640 /etc/personal-vpn-web/web.env
 
 systemctl daemon-reload
-systemctl enable --now personal-vpn-managerd
+systemctl enable personal-vpn-managerd
+systemctl restart personal-vpn-managerd
 for _ in {1..20}; do
     /usr/local/bin/personal-vpn-managerctl health >/dev/null 2>&1 && break
     sleep 0.25
 done
 /usr/local/bin/personal-vpn-managerctl health >/dev/null
-systemctl enable --now personal-vpn-web
+systemctl enable personal-vpn-web
+systemctl restart personal-vpn-web
 
 install -m 0644 "${STAGE}/nginx-bootstrap.conf" "/etc/nginx/sites-available/${DOMAIN}"
 ln -sfn "/etc/nginx/sites-available/${DOMAIN}" "/etc/nginx/sites-enabled/${DOMAIN}"
@@ -96,7 +98,8 @@ fi
 install -m 0644 "${STAGE}/nginx.conf" "/etc/nginx/sites-available/${DOMAIN}"
 nginx -t
 systemctl reload nginx
-curl --fail --silent --show-error --resolve "${DOMAIN}:443:127.0.0.1" \
+curl --fail --silent --show-error --noproxy '*' \
+    --resolve "${DOMAIN}:443:127.0.0.1" \
     "https://${DOMAIN}/api/v1/health" >/dev/null
 
 printf 'WEB_INSTALL=ok\n'
