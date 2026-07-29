@@ -13,6 +13,6 @@
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\TNestVPN.Core\TNestVPN.Core.csproj" />
-    <PackageReference Include="System.ServiceProcess.ServiceController" Version="9.0.5" />
+    <PackageReference Include="System.ServiceProcess.ServiceController" Version="10.0.10" />
   </ItemGroup>
 </Project>
