@@ -1,6 +1,6 @@
 # 个人自用 WireGuard VPN
 
-这是一个在本机管理、部署到新加坡 Ubuntu 24.04 LTS 云服务器的双栈 WireGuard VPN。项目同时包含 TNest VPN Web 管理后台、Windows x64 客户端和 Android 8+ 客户端；iOS/macOS 继续使用官方 WireGuard。
+这是一个在本机管理、部署到 Ubuntu 24.04 LTS 云服务器的双栈 WireGuard VPN。项目同时包含 TNest VPN Web 管理后台、Windows x64 客户端和 Android 8+ 客户端；iOS/macOS 继续使用官方 WireGuard。
 
 ## 已实现
 
