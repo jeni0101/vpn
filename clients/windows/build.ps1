@@ -26,6 +26,12 @@ if (-not $wireguardDll) { throw "Pinned build did not provide amd64 wireguard.dl
 Copy-Item $wireguardDll.FullName $publish
 
 dotnet build (Join-Path $root "installer\TNestVPN.Installer.wixproj") -c Release
-Get-FileHash (Join-Path $publish "*") -Algorithm SHA256 |
-    Format-Table -HideTableHeaders Path, Hash |
-    Out-File (Join-Path $artifacts "SHA256SUMS.txt") -Encoding utf8
+$hashes = Get-ChildItem -LiteralPath $publish -File -Recurse |
+    Sort-Object FullName |
+    ForEach-Object {
+        $hash = Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256
+        $relative = [System.IO.Path]::GetRelativePath($publish, $_.FullName)
+        $relative = $relative.Replace("\", "/")
+        "{0}  publish/{1}" -f $hash.Hash.ToLowerInvariant(), $relative
+    }
+$hashes | Set-Content (Join-Path $artifacts "SHA256SUMS.txt") -Encoding utf8

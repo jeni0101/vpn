@@ -13,6 +13,10 @@ clients\windows\build.ps1
 脚本把 WireGuard Windows 固定到提交
 `4e6726c23ae9c5cb58e0c9910f3b7515621d133d`，构建 x64 `tunnel.dll`，再生成自包含应用和未签名 MSI。GitHub Actions 只生成未签名产物。
 
+WiX 中每个版本化 EXE/DLL 使用独立组件，以便稳定生成组件 GUID。构建后的
+`SHA256SUMS.txt` 递归列出 `publish/` 下的文件，不会尝试对语言资源目录执行
+`Get-FileHash`。
+
 正式侧载必须在离线发布机上：
 
 1. 校验 Git 提交和 `SHA256SUMS.txt`。

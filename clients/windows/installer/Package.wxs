@@ -5,16 +5,25 @@
     <MediaTemplate EmbedCab="yes" />
     <StandardDirectory Id="ProgramFiles64Folder">
       <Directory Id="INSTALLFOLDER" Name="TNest VPN">
-        <Component Id="AppFiles" Guid="*">
+        <Component Id="AppExecutable" Guid="*">
           <File Source="$(var.PublishDir)\TNestVPN.exe" />
+        </Component>
+        <Component Id="ServiceHostExecutable" Guid="*">
           <File Source="$(var.PublishDir)\TNestVPN.ServiceHost.exe" />
+        </Component>
+        <Component Id="TunnelLibrary" Guid="*">
           <File Source="$(var.PublishDir)\tunnel.dll" />
+        </Component>
+        <Component Id="WireGuardLibrary" Guid="*">
           <File Source="$(var.PublishDir)\wireguard.dll" />
         </Component>
       </Directory>
     </StandardDirectory>
     <Feature Id="Main" Title="TNest VPN">
-      <ComponentRef Id="AppFiles" />
+      <ComponentRef Id="AppExecutable" />
+      <ComponentRef Id="ServiceHostExecutable" />
+      <ComponentRef Id="TunnelLibrary" />
+      <ComponentRef Id="WireGuardLibrary" />
     </Feature>
   </Package>
 </Wix>

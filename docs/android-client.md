@@ -15,6 +15,17 @@ gradle -p clients/android \
 
 生成 release APK 时，Gradle 工程不内置签名配置。必须在离线发布机用自用 Android keystore 签名，随后执行 `apksigner verify --verbose --print-certs`。keystore、口令和 Ed25519 发布私钥不得上传。
 
+手动运行 GitHub `unsigned-release` 工作流会生成两个不同产物：
+
+- `tnest-vpn-android-debug-installable`：已用 CI Debug 证书签名，可直接安装，仅供测试。
+- `tnest-vpn-android-release-unsigned`：未签名 Release APK，只能交给离线发布机签名，不能直接安装。
+
+Android 安装未签名 Release APK 时可能显示错误码 33 或
+`packageInfo is null`。这不是应用包名错误，而是安装包没有有效签名。Debug
+构建与正式 Release 证书不同，而且不同 CI 运行生成的 Debug 证书也可能不同。覆盖安装
+失败时应先卸载旧测试版；改装正式版前也应先卸载 Debug 版，除非两者使用同一固定
+keystore。
+
 ## 使用
 
 1. 安装自己核对并签名的 APK。

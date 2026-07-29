@@ -39,11 +39,32 @@ jobs:
         with:
           gradle-version: "8.13"
       - run: sdkmanager "platforms;android-36" "build-tools;36.0.0"
-      - run: gradle -p clients/android :app:assembleRelease --no-daemon
-      - run: sha256sum clients/android/app/build/outputs/apk/release/*.apk > clients/android/SHA256SUMS
+      - run: gradle -p clients/android :app:assembleDebug :app:assembleRelease --no-daemon
+      - name: Verify installable debug APK
+        run: |
+          apk="clients/android/app/build/outputs/apk/debug/app-debug.apk"
+          test -f "${apk}"
+          "${ANDROID_HOME}/build-tools/36.0.0/apksigner" \
+            verify --verbose --print-certs "${apk}"
+          "${ANDROID_HOME}/build-tools/36.0.0/aapt" dump badging "${apk}" |
+            grep -F "package: name='asia.tnestai.vpn'"
+      - name: Generate Android checksums
+        run: |
+          sha256sum clients/android/app/build/outputs/apk/debug/*.apk \
+            > clients/android/SHA256SUMS-debug
+          sha256sum clients/android/app/build/outputs/apk/release/*.apk \
+            > clients/android/SHA256SUMS-release
       - uses: actions/upload-artifact@v4
         with:
-          name: tnest-vpn-android-unsigned
+          name: tnest-vpn-android-debug-installable
+          if-no-files-found: error
+          path: |
+            clients/android/app/build/outputs/apk/debug/app-debug.apk
+            clients/android/SHA256SUMS-debug
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tnest-vpn-android-release-unsigned
+          if-no-files-found: error
           path: |
             clients/android/app/build/outputs/apk/release/*.apk
-            clients/android/SHA256SUMS
+            clients/android/SHA256SUMS-release
